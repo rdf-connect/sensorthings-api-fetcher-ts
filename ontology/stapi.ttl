@@ -10,7 +10,6 @@
 @prefix schema: <http://schema.org/> .
 @prefix foaf: <http://xmlns.com/foaf/0.1/> .
 @prefix vcard: <http://www.w3.org/2006/vcard/ns#> .
-@prefix cc: <http://creativecommons.org/ns#> .      
 @prefix vann: <https://vocab.org/vann/> .          
 
 # Placeholder location
@@ -292,5 +291,3 @@ stapi:feature rdf:type owl:DatatypeProperty ; # todo: further mapping for featur
     rdfs:range xsd:string ;  # Typically a GeoJSON or similar string
     rdfs:label "feature" ;
     rdfs:comment "The actual spatial data of the FeatureOfInterest in the specified encoding type." .
-
-### Associations to other resources
