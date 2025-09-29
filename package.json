@@ -1,5 +1,5 @@
 {
-  "name": "@rdfc/stapi-processor-ts",
+  "name": "@rdfc/sensorthings-api-fetcher-ts",
   "version": "0.1.0",
   "description": "Processor to fetch SensorThings API content.",
   "type": "module",
@@ -15,10 +15,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/rdf-connect/stapi-processor-ts"
+    "url": "https://github.com/rdf-connect/sesnorthings-api-fetcher-ts"
   },
   "author": "Ruben Dedecker",
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@rdfc/js-runner": "^2.0.0",
     "@typescript-eslint/eslint-plugin": "^8.41.0",
