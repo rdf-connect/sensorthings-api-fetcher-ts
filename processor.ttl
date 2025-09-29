@@ -13,8 +13,14 @@ rdfc:SensorThingsFetcher rdfc:jsImplementationOf rdfc:Processor;
 [ ] a sh:NodeShape;
     sh:targetClass rdfc:SensorThingsFetcher;
     sh:property [
-        sh:path rdfc:url;
-        sh:name "url";
+        sh:path rdfc:datastreamCollection;
+        sh:name "datastreamCollection";
+        sh:datatype xsd:string;
+        sh:minCount 1;
+        sh:maxCount 1;
+    ], [
+        sh:path rdfc:datastream;
+        sh:name "datastream";
         sh:datatype xsd:string;
         sh:minCount 1;
         sh:maxCount 1;

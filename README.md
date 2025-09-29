@@ -24,7 +24,7 @@ Next, you can add the JS/TS TemplateProcessor to your pipeline configuration as 
 
 # fetcher to get SensorThings API data
 <fetcher> a rdfc:SensorThingsFetcher;
-  rdfc:url "https://<endpoint>/Datastreams";
+  rdfc:datastream "https://<endpoint>/Datastreams";
   rdfc:writer <writeChannel> .
 ```
 

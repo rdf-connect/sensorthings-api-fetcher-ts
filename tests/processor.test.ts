@@ -1,29 +1,29 @@
 import { describe, expect, test } from "vitest";
 import { checkProcDefinition, getProc } from "@rdfc/js-runner/lib/testUtils";
 
-import { TemplateProcessor } from "../src";
+import { SensorThingsFetcher, TemplateProcessor } from "../src";
 
 describe("Template processor tests", async () => {
-    test("rdfc:TemplateProcessorJs is properly defined", async () => {
+    test("rdfc:SensorThingsFetcher is properly defined", async () => {
         const processorConfig = `
         @prefix rdfc: <https://w3id.org/rdf-connect#>.
 
-        <http://example.com/ns#processor> a rdfc:TemplateProcessorJs;
-          rdfc:reader <jr>;
+        <http://example.com/ns#processor> a rdfc:SensorThingsFetcher;
+          rdfc:url <url>;
           rdfc:writer <jw>.
         `;
 
         const configLocation = process.cwd() + "/processor.ttl";
-        await checkProcDefinition(configLocation, "TemplateProcessorJs");
+        await checkProcDefinition(configLocation, "SensorThingsFetcher");
 
-        const processor = await getProc<TemplateProcessor>(
+        const processor = await getProc<SensorThingsFetcher>(
             processorConfig,
-            "TemplateProcessorJs",
+            "SensorThingsFetcher",
             configLocation,
         );
         await processor.init();
 
-        expect(processor.reader.constructor.name).toBe("ReaderInstance");
         expect(processor.writer?.constructor.name).toBe("WriterInstance");
+        expect(processor.url).toBeTypeOf("string");
     });
 });
