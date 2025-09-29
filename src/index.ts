@@ -97,7 +97,8 @@ async function processDatastream(datastreamURI: string, writer: Writer) {
     let extracted: {observation: Observation, featureOfInterest: FeatureOfInterest}[] = []
 
     // setup the back-to-front filter for the observations
-    nextLink = nextLink.includes('?') ? nextLink + `&$orderby=resultTime%20asc` : nextLink + `?$orderby=resultTime%20asc`
+    if (nextLink) nextLink = nextLink.includes('?') ? nextLink + `&$orderby=resultTime%20asc` : nextLink + `?$orderby=resultTime%20asc`
+    
     while (nextLink) {
         let info = await extractObservations(nextLink)
         extracted = info.extracted
