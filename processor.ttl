@@ -16,13 +16,11 @@ rdfc:SensorThingsFetcher rdfc:jsImplementationOf rdfc:Processor;
         sh:path rdfc:datastreamCollection;
         sh:name "datastreamCollection";
         sh:datatype xsd:string;
-        sh:minCount 1;
         sh:maxCount 1;
     ], [
         sh:path rdfc:datastream;
         sh:name "datastream";
         sh:datatype xsd:string;
-        sh:minCount 1;
         sh:maxCount 1;
     ], [
         sh:class rdfc:Writer;
