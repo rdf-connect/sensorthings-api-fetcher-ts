@@ -191,15 +191,15 @@ stapi:unitOfMeasurement rdf:type owl:DatatypeProperty ;
     rdfs:label "unitOfMeasurement" ;
     rdfs:comment "Metadata about the unit of measurement (typically a JSON object represented as a string)." .
 
-stapi:phenomenonTimeDuration rdf:type owl:DatatypeProperty ;
+stapi:phenomenonTimeDuration rdf:type owl:ObjectProperty ;
     rdfs:domain stapi:Datastream ;
-    rdfs:range xsd:duration ;  # Typically an ISO 8601 time interval
+    rdfs:range time:Interval ;  # Typically an ISO 8601 time interval
     rdfs:label "phenomenonTime" ;
     rdfs:comment "The time period during which the Observations in this Datastream were made." .
 
-stapi:resultTimeDuration rdf:type owl:DatatypeProperty ;
+stapi:resultTimeDuration rdf:type owl:ObjectProperty ;
     rdfs:domain stapi:Datastream ;
-    rdfs:range xsd:duration ;  # Typically an ISO 8601 time interval
+    rdfs:range time:Interval ;  # Typically an ISO 8601 time interval
     rdfs:label "resultTime" ;
     rdfs:comment "The temporal interval of the result times of all observations belonging to this Datastream." .
 
@@ -235,9 +235,9 @@ stapi:definition rdf:type owl:ObjectProperty ;
 ### Properties of Observation
 
 # PhenomenonTime
-stapi:phenomenonTime rdf:type owl:DatatypeProperty ; # needs mapping from string to dateTime
+stapi:phenomenonTime rdf:type owl:ObjectProperty ; # needs mapping from string to dateTime
     rdfs:domain stapi:Observation ;
-    rdfs:range xsd:dateTime ;  # Typically an ISO 8601 time
+    rdfs:range time:Interval ;  
     rdfs:label "phenomenonTime" ;
     rdfs:comment "The time when the Observation was made." .
 
@@ -263,9 +263,9 @@ stapi:resultQuality rdf:type owl:DatatypeProperty ;
     rdfs:comment "A measure of the quality of the result (optional)." .
 
 # ValidTime
-stapi:validTime rdf:type owl:DatatypeProperty ; # needs mapping
+stapi:validTime rdf:type owl:ObjectProperty ; # needs mapping
     rdfs:domain stapi:Observation ;
-    rdfs:range xsd:duration ;  # Typically an ISO 8601 time interval
+    rdfs:range time:Interval ;  # Typically an ISO 8601 time interval
     rdfs:label "validTime" ;
     rdfs:comment "The time period during which the result is valid." .
 
