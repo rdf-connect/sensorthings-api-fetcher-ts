@@ -157,10 +157,9 @@ async function processDatastream(datastreamURI: string, writer: Writer) {
             const duration = `P${days}DT${hours}H${minutes}M${seconds}S`;
 
             const processedObservation: Observation = {
-                "@iot.selfLink": observation["@iot.selfLink"],
+                ...observation,
                 datastream: datastream["@iot.selfLink"],
                 featureOfInterest: featureOfInterest["@iot.selfLink"],
-                resultTime: observation.resultTime,
                 phenomenonTime: {
                     hasBeginning: {
                         inXSDDateTimeStamp: startTime.toISOString(),
@@ -169,6 +168,7 @@ async function processDatastream(datastreamURI: string, writer: Writer) {
                     hasXSDDuration: duration,
                 },
             };
+
             const extractedData: ExtractedData = {
                 observation: processedObservation,
                 featureOfInterest,
@@ -247,9 +247,7 @@ async function extractMetadata(dataStreamURL: string) {
     return metadata;
 }
 
-async function extractObservations(
-    url: string,
-): Promise<{
+async function extractObservations(url: string): Promise<{
     extracted: {
         observation: ObservationInput;
         featureOfInterest: FeatureOfInterest;
