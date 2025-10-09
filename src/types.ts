@@ -102,3 +102,12 @@ export type XSDDuration = {
     hasEnd: { inXSDDateTimeStamp: string };
     hasXSDDuration: string;
 };
+
+export type Metadata = {
+    datastream: DataStream;
+    thing: Thing;
+    locations: Location[];
+    sensor: Sensor;
+    observedProperty: ObservedProperty;
+    featureOfInterest: FeatureOfInterest;
+};

@@ -5,6 +5,7 @@ import type {
     ExtractedData,
     FeatureOfInterest,
     Location,
+    Metadata,
     Observation,
     ObservationInput,
     ObservedProperty,
@@ -134,93 +135,42 @@ async function processDatastream(
             ? nextLink + "&$orderby=resultTime%20asc"
             : nextLink + "?$orderby=resultTime%20asc";
 
-    let foi;
+    let metadata:
+        | {
+              datastream: DataStream;
+              thing: Thing;
+              featureOfInterest: FeatureOfInterest;
+              locations: Location[];
+              sensor: Sensor;
+              observedProperty: ObservedProperty;
+          }
+        | undefined;
 
     while (nextLink) {
         const info = await extractObservations(nextLink);
         extracted = info.extracted;
         nextLink = info.nextLink;
         for (const { observation, featureOfInterest } of extracted) {
-            foi = featureOfInterest;
-            // Setting links
-            // datastream.observation = observation["@iot.selfLink"]
-            datastream.thing = thing["@iot.selfLink"];
-            datastream.observedProperty = observedProperty["@iot.selfLink"];
-            datastream.sensor = sensor["@iot.selfLink"];
-            thing.locations = [];
-            for (const location of locations)
-                thing.locations.push(location["@iot.selfLink"]);
-
-            const durationString = observation.phenomenonTime;
-            let startTimeString;
-            let endTimeString;
-            let xsdDurationString;
-            try {
-                if (!durationString.includes("/")) {
-                    // Only a single datetime was provided not a duration
-                    xsdDurationString = "P0DT0H0M0S";
-                    endTimeString = durationString;
-                    startTimeString = durationString;
-                } else {
-                    const startTime = new Date(durationString.split("/")[0]);
-                    const endTime = new Date(durationString.split("/")[1]);
-
-                    // compute difference in milliseconds
-                    let diffMs = endTime.getTime() - startTime.getTime();
-                    if (diffMs < 0) diffMs = 0;
-
-                    // convert milliseconds to ISO 8601 duration components
-                    const seconds = Math.floor((diffMs / 1000) % 60);
-                    const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
-                    const hours = Math.floor((diffMs / (1000 * 60 * 60)) % 24);
-                    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-                    // build xsd:duration string
-                    xsdDurationString = `P${days}DT${hours}H${minutes}M${seconds}S`;
-                    endTimeString = endTime.toISOString();
-                    startTimeString = startTime.toISOString();
-                }
-            } catch (error) {
-                console.error(
-                    `Could not parse date ${durationString} of ${observation["@iot.selfLink"]}: ${error}.`,
+            if (!metadata) {
+                metadata = await prepareMetadataObject(
+                    {
+                        datastream,
+                        thing,
+                        featureOfInterest,
+                        locations,
+                        sensor,
+                        observedProperty,
+                    },
+                    observation,
                 );
             }
-
-            const processedObservation: Observation = {
-                ...observation,
-                datastream: datastream["@iot.selfLink"],
-                featureOfInterest: featureOfInterest["@iot.selfLink"],
-                phenomenonTime: {
-                    hasBeginning: {
-                        inXSDDateTimeStamp: startTimeString as string,
-                    },
-                    hasEnd: { inXSDDateTimeStamp: endTimeString as string },
-                    hasXSDDuration: xsdDurationString as string,
-                },
-            };
-
-            const extractedData: ExtractedData = {
-                observation: processedObservation,
-                featureOfInterest,
-                datastream,
-                thing,
-                locations,
-                sensor,
-                observedProperty,
-            };
-
-            await writer.string(JSON.stringify(extractedData, null, 2));
+            const exportObject = await buildExportedObservationObject(
+                observation,
+                metadata,
+            );
+            await writer.string(JSON.stringify(exportObject, null, 2));
         }
     }
-
-    const metadata = {
-        featureOfInterest: foi,
-        datastream,
-        thing,
-        locations,
-        sensor,
-        observedProperty,
-    };
 
     if (mqttURL) {
         console.debug(`Subscribing to the MQTT endpoint at ${mqttURL}`);
@@ -232,91 +182,28 @@ async function processDatastream(
             { mqttUrl: mqttURL },
             async (message) => {
                 const observation: ObservationInput = message;
-
-                const {
-                    datastream,
-                    thing,
-                    locations,
-                    sensor,
-                    observedProperty,
-                } = metadata;
-                let featureOfInterest = metadata.featureOfInterest;
-
-                datastream.thing = thing["@iot.selfLink"];
-                datastream.observedProperty = observedProperty["@iot.selfLink"];
-                datastream.sensor = sensor["@iot.selfLink"];
-                thing.locations = [];
-                for (const location of locations)
-                    thing.locations.push(location["@iot.selfLink"]);
-
-                const durationString = observation.phenomenonTime;
-                let startTimeString;
-                let endTimeString;
-                let xsdDurationString;
-                try {
-                    if (!durationString.includes("/")) {
-                        // Only a single datetime was provided not a duration
-                        xsdDurationString = "P0DT0H0M0S";
-                        endTimeString = durationString;
-                        startTimeString = durationString;
-                    } else {
-                        const startTime = new Date(
-                            durationString.split("/")[0],
-                        );
-                        const endTime = new Date(durationString.split("/")[1]);
-
-                        // compute difference in milliseconds
-                        let diffMs = endTime.getTime() - startTime.getTime();
-                        if (diffMs < 0) diffMs = 0;
-
-                        // convert milliseconds to ISO 8601 duration components
-                        const seconds = Math.floor((diffMs / 1000) % 60);
-                        const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
-                        const hours = Math.floor(
-                            (diffMs / (1000 * 60 * 60)) % 24,
-                        );
-                        const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-                        // build xsd:duration string
-                        xsdDurationString = `P${days}DT${hours}H${minutes}M${seconds}S`;
-                        endTimeString = endTime.toISOString();
-                        startTimeString = startTime.toISOString();
-                    }
-                } catch (error) {
-                    console.error(
-                        `Could not parse date ${durationString} of ${observation["@iot.selfLink"]}: ${error}.`,
+                if (!metadata || !metadata.featureOfInterest) {
+                    metadata = await prepareMetadataObject(
+                        {
+                            datastream,
+                            thing,
+                            featureOfInterest: undefined,
+                            locations,
+                            sensor,
+                            observedProperty,
+                        },
+                        observation,
                     );
                 }
-
-                if (!featureOfInterest) {
-                    const newFOI = (await (
-                        await rateLimitedFetch(
-                            observation["FeatureOfInterest@iot.navigationLink"],
-                        )
-                    ).json()) as FeatureOfInterest;
-                    metadata.featureOfInterest = newFOI;
-                    featureOfInterest = newFOI;
-                }
-
-                const processedObservation: Observation = {
-                    ...observation,
-                    datastream: datastream["@iot.selfLink"],
-                    featureOfInterest: featureOfInterest["@iot.selfLink"],
-                    phenomenonTime: {
-                        hasBeginning: {
-                            inXSDDateTimeStamp: startTimeString as string,
-                        },
-                        hasEnd: { inXSDDateTimeStamp: endTimeString as string },
-                        hasXSDDuration: xsdDurationString as string,
-                    },
-                };
+                const exportObject = await buildExportedObservationObject(
+                    observation,
+                    metadata,
+                );
 
                 console.debug(
-                    `Loaded new entry ${JSON.stringify(processedObservation, null, 2)}`,
+                    `Pushed newly created entry for topic ${topic}:\n${JSON.stringify(exportObject, null, 2)}`,
                 );
-                await writer.string(
-                    JSON.stringify(processedObservation, null, 2),
-                );
+                await writer.string(JSON.stringify(exportObject, null, 2));
             },
         );
     }
@@ -413,6 +300,93 @@ async function extractObservations(url: string): Promise<{
     }
     const nextLink = body["@iot.nextLink"];
     return { extracted, nextLink };
+}
+
+async function prepareMetadataObject(
+    metadata: {
+        datastream: DataStream;
+        thing: Thing;
+        locations: Location[];
+        sensor: Sensor;
+        observedProperty: ObservedProperty;
+        featureOfInterest?: FeatureOfInterest;
+    },
+    observationInput: ObservationInput,
+): Promise<Metadata> {
+    metadata.datastream.thing = metadata.thing["@iot.selfLink"];
+    metadata.datastream.observedProperty =
+        metadata.observedProperty["@iot.selfLink"];
+    metadata.datastream.sensor = metadata.sensor["@iot.selfLink"];
+    metadata.thing.locations = [];
+    for (const location of metadata.locations) {
+        metadata.thing.locations.push(location["@iot.selfLink"]);
+    }
+
+    if (!metadata.featureOfInterest) {
+        const newFOI = (await (
+            await rateLimitedFetch(
+                observationInput["FeatureOfInterest@iot.navigationLink"],
+            )
+        ).json()) as FeatureOfInterest;
+        metadata.featureOfInterest = newFOI;
+    }
+
+    return metadata as Metadata;
+}
+
+async function buildExportedObservationObject(
+    observation: ObservationInput,
+    metadata: Metadata,
+) {
+    const durationString = observation.phenomenonTime;
+    let startTimeString;
+    let endTimeString;
+    let xsdDurationString;
+    try {
+        if (!durationString.includes("/")) {
+            // Only a single datetime was provided not a duration
+            xsdDurationString = "P0DT0H0M0S";
+            endTimeString = durationString;
+            startTimeString = durationString;
+        } else {
+            const startTime = new Date(durationString.split("/")[0]);
+            const endTime = new Date(durationString.split("/")[1]);
+
+            // compute difference in milliseconds
+            let diffMs = endTime.getTime() - startTime.getTime();
+            if (diffMs < 0) diffMs = 0;
+
+            // convert milliseconds to ISO 8601 duration components
+            const seconds = Math.floor((diffMs / 1000) % 60);
+            const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
+            const hours = Math.floor((diffMs / (1000 * 60 * 60)) % 24);
+            const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+            // build xsd:duration string
+            xsdDurationString = `P${days}DT${hours}H${minutes}M${seconds}S`;
+            endTimeString = endTime.toISOString();
+            startTimeString = startTime.toISOString();
+        }
+    } catch (error) {
+        console.error(
+            `Could not parse date ${durationString} of ${observation["@iot.selfLink"]}: ${error}.`,
+        );
+    }
+
+    const processedObservation: Observation = {
+        ...observation,
+        datastream: metadata.datastream["@iot.selfLink"],
+        featureOfInterest: metadata.featureOfInterest["@iot.selfLink"],
+        phenomenonTime: {
+            hasBeginning: {
+                inXSDDateTimeStamp: startTimeString as string,
+            },
+            hasEnd: { inXSDDateTimeStamp: endTimeString as string },
+            hasXSDDuration: xsdDurationString as string,
+        },
+    };
+
+    return { ...metadata, observation: processedObservation };
 }
 
 export function log(message: string) {

@@ -3,7 +3,7 @@ type QueuedRequest = {
     url: string;
     delay: number;
     resolve: (value: Response) => void;
-    reject: (reason?: string) => void;
+    reject: (reason?: unknown) => void;
 };
 
 const requestQueue: QueuedRequest[] = [];
@@ -34,7 +34,7 @@ async function processQueue() {
     try {
         const response = await fetch(url);
         resolve(response);
-    } catch (err) {
+    } catch (err: unknown) {
         reject(err);
     }
 
