@@ -1,4 +1,4 @@
-import { Processor, start, type Reader, type Writer } from "@rdfc/js-runner";
+import { Processor, type Writer } from "@rdfc/js-runner";
 
 import type {
     DataStream,
@@ -12,7 +12,7 @@ import type {
     Thing,
 } from "./types";
 import { rateLimitedFetch } from "./ratelimit";
-// import { subscribeToSensorThingsCollection } from "./mqttSubscribe";
+import { subscribeToSensorThingsCollection } from "./mqttSubscribe";
 export type {
     DataStream,
     ExtractedData,
@@ -28,6 +28,7 @@ type TemplateArgs = {
     datastream: string;
     datastreamCollection: string;
     writer: Writer;
+    mqttURL: string;
 };
 
 /**
@@ -93,7 +94,11 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
     async produce(this: TemplateArgs & this): Promise<void> {
         try {
             for (const datastreamURI of this.datastreams) {
-                await processDatastream(datastreamURI, this.writer);
+                await processDatastream(
+                    datastreamURI,
+                    this.writer,
+                    this.mqttURL,
+                );
             }
             this.writer.close();
         } catch (e) {
@@ -105,7 +110,11 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
     }
 }
 
-async function processDatastream(datastreamURI: string, writer: Writer) {
+async function processDatastream(
+    datastreamURI: string,
+    writer: Writer,
+    mqttURL?: string,
+) {
     // Extract the datastream observations back-to-front
     log(`Processing datastream: ${datastreamURI}`);
     const { datastream, thing, locations, sensor, observedProperty } =
@@ -125,11 +134,14 @@ async function processDatastream(datastreamURI: string, writer: Writer) {
             ? nextLink + "&$orderby=resultTime%20asc"
             : nextLink + "?$orderby=resultTime%20asc";
 
+    let foi;
+
     while (nextLink) {
         const info = await extractObservations(nextLink);
         extracted = info.extracted;
         nextLink = info.nextLink;
         for (const { observation, featureOfInterest } of extracted) {
+            foi = featureOfInterest;
             // Setting links
             // datastream.observation = observation["@iot.selfLink"]
             datastream.thing = thing["@iot.selfLink"];
@@ -140,21 +152,39 @@ async function processDatastream(datastreamURI: string, writer: Writer) {
                 thing.locations.push(location["@iot.selfLink"]);
 
             const durationString = observation.phenomenonTime;
-            const startTime = new Date(durationString.split("/")[0]);
-            const endTime = new Date(durationString.split("/")[1]);
+            let startTimeString;
+            let endTimeString;
+            let xsdDurationString;
+            try {
+                if (!durationString.includes("/")) {
+                    // Only a single datetime was provided not a duration
+                    xsdDurationString = "P0DT0H0M0S";
+                    endTimeString = durationString;
+                    startTimeString = durationString;
+                } else {
+                    const startTime = new Date(durationString.split("/")[0]);
+                    const endTime = new Date(durationString.split("/")[1]);
 
-            // compute difference in milliseconds
-            let diffMs = endTime.getTime() - startTime.getTime();
-            if (diffMs < 0) diffMs = 0;
+                    // compute difference in milliseconds
+                    let diffMs = endTime.getTime() - startTime.getTime();
+                    if (diffMs < 0) diffMs = 0;
 
-            // convert milliseconds to ISO 8601 duration components
-            const seconds = Math.floor((diffMs / 1000) % 60);
-            const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
-            const hours = Math.floor((diffMs / (1000 * 60 * 60)) % 24);
-            const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+                    // convert milliseconds to ISO 8601 duration components
+                    const seconds = Math.floor((diffMs / 1000) % 60);
+                    const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
+                    const hours = Math.floor((diffMs / (1000 * 60 * 60)) % 24);
+                    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-            // build xsd:duration string
-            const duration = `P${days}DT${hours}H${minutes}M${seconds}S`;
+                    // build xsd:duration string
+                    xsdDurationString = `P${days}DT${hours}H${minutes}M${seconds}S`;
+                    endTimeString = endTime.toISOString();
+                    startTimeString = startTime.toISOString();
+                }
+            } catch (error) {
+                console.error(
+                    `Could not parse date ${durationString} of ${observation["@iot.selfLink"]}: ${error}.`,
+                );
+            }
 
             const processedObservation: Observation = {
                 ...observation,
@@ -162,10 +192,10 @@ async function processDatastream(datastreamURI: string, writer: Writer) {
                 featureOfInterest: featureOfInterest["@iot.selfLink"],
                 phenomenonTime: {
                     hasBeginning: {
-                        inXSDDateTimeStamp: startTime.toISOString(),
+                        inXSDDateTimeStamp: startTimeString as string,
                     },
-                    hasEnd: { inXSDDateTimeStamp: endTime.toISOString() },
-                    hasXSDDuration: duration,
+                    hasEnd: { inXSDDateTimeStamp: endTimeString as string },
+                    hasXSDDuration: xsdDurationString as string,
                 },
             };
 
@@ -182,10 +212,114 @@ async function processDatastream(datastreamURI: string, writer: Writer) {
             await writer.string(JSON.stringify(extractedData, null, 2));
         }
     }
-    // Setup MQTT subscription to keep up to date with new observations
-    // subscribeToSensorThingsCollection(observationsLink, {mqttUrl: ""}, (messsage => {
-    //     console.log('message', message)
-    // }) )
+
+    const metadata = {
+        featureOfInterest: foi,
+        datastream,
+        thing,
+        locations,
+        sensor,
+        observedProperty,
+    };
+
+    if (mqttURL) {
+        console.debug(`Subscribing to the MQTT endpoint at ${mqttURL}`);
+        // Setup MQTT subscription to keep up to date with new observations
+        let topic = new URL(observationsLink).pathname;
+        topic = topic.startsWith("/") ? topic.replace(/^\/+/, "") : topic;
+        subscribeToSensorThingsCollection(
+            topic,
+            { mqttUrl: mqttURL },
+            async (message) => {
+                const observation: ObservationInput = message;
+
+                const {
+                    datastream,
+                    thing,
+                    locations,
+                    sensor,
+                    observedProperty,
+                } = metadata;
+                let featureOfInterest = metadata.featureOfInterest;
+
+                datastream.thing = thing["@iot.selfLink"];
+                datastream.observedProperty = observedProperty["@iot.selfLink"];
+                datastream.sensor = sensor["@iot.selfLink"];
+                thing.locations = [];
+                for (const location of locations)
+                    thing.locations.push(location["@iot.selfLink"]);
+
+                const durationString = observation.phenomenonTime;
+                let startTimeString;
+                let endTimeString;
+                let xsdDurationString;
+                try {
+                    if (!durationString.includes("/")) {
+                        // Only a single datetime was provided not a duration
+                        xsdDurationString = "P0DT0H0M0S";
+                        endTimeString = durationString;
+                        startTimeString = durationString;
+                    } else {
+                        const startTime = new Date(
+                            durationString.split("/")[0],
+                        );
+                        const endTime = new Date(durationString.split("/")[1]);
+
+                        // compute difference in milliseconds
+                        let diffMs = endTime.getTime() - startTime.getTime();
+                        if (diffMs < 0) diffMs = 0;
+
+                        // convert milliseconds to ISO 8601 duration components
+                        const seconds = Math.floor((diffMs / 1000) % 60);
+                        const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
+                        const hours = Math.floor(
+                            (diffMs / (1000 * 60 * 60)) % 24,
+                        );
+                        const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+                        // build xsd:duration string
+                        xsdDurationString = `P${days}DT${hours}H${minutes}M${seconds}S`;
+                        endTimeString = endTime.toISOString();
+                        startTimeString = startTime.toISOString();
+                    }
+                } catch (error) {
+                    console.error(
+                        `Could not parse date ${durationString} of ${observation["@iot.selfLink"]}: ${error}.`,
+                    );
+                }
+
+                if (!featureOfInterest) {
+                    const newFOI = (await (
+                        await rateLimitedFetch(
+                            observation["FeatureOfInterest@iot.navigationLink"],
+                        )
+                    ).json()) as FeatureOfInterest;
+                    metadata.featureOfInterest = newFOI;
+                    featureOfInterest = newFOI;
+                }
+
+                const processedObservation: Observation = {
+                    ...observation,
+                    datastream: datastream["@iot.selfLink"],
+                    featureOfInterest: featureOfInterest["@iot.selfLink"],
+                    phenomenonTime: {
+                        hasBeginning: {
+                            inXSDDateTimeStamp: startTimeString as string,
+                        },
+                        hasEnd: { inXSDDateTimeStamp: endTimeString as string },
+                        hasXSDDuration: xsdDurationString as string,
+                    },
+                };
+
+                console.debug(
+                    `Loaded new entry ${JSON.stringify(processedObservation, null, 2)}`,
+                );
+                await writer.string(
+                    JSON.stringify(processedObservation, null, 2),
+                );
+            },
+        );
+    }
 }
 
 async function extractDatastreams(url: string) {

@@ -28,4 +28,9 @@ rdfc:SensorThingsFetcher rdfc:jsImplementationOf rdfc:Processor;
         sh:name "writer";
         sh:minCount 1;
         sh:maxCount 1;
+    ], [
+        sh:path rdfc:mqttURL;
+        sh:name "mqttURL";
+        sh:datatype xsd:string;
+        sh:maxCount 1;
     ].

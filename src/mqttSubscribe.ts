@@ -1,12 +1,13 @@
-import mqtt, { MqttClient, IClientOptions } from 'mqtt';
+import mqtt, { IClientOptions } from "mqtt";
+import { ObservationInput } from "./types";
 
-type Entity = any;  // you can define a better interface depending on your STA model
+type Entity = ObservationInput; // you can define a better interface depending on your STA model
 
 interface SubscribeOptions {
-  mqttUrl: string;         // e.g. "wss://your-broker/mqtt"
-  mqttOpts?: IClientOptions;
-  topicPrefix?: string;    // e.g. "v1.1" or "v1.0"
-  qos?: 0 | 1 | 2;
+    mqttUrl: string; // e.g. "wss://your-broker/mqtt"
+    mqttOpts?: IClientOptions;
+    topicPrefix?: string; // e.g. "v1.1" or "v1.0"
+    qos?: 0 | 1 | 2;
 }
 
 /**
@@ -17,54 +18,65 @@ interface SubscribeOptions {
  * @returns handle to unsubscribe / disconnect
  */
 export function subscribeToSensorThingsCollection(
-  collectionUri: string,
-  opts: SubscribeOptions,
-  onMessage: (entity: Entity, topic: string) => void
+    collectionUri: string,
+    opts: SubscribeOptions,
+    onMessage: (entity: Entity, topic: string) => void,
 ): { unsubscribe: () => void } {
-  const { mqttUrl, mqttOpts, topicPrefix = '', qos = 0 } = opts;
+    const { mqttUrl, mqttOpts, topicPrefix = "", qos = 0 } = opts;
 
-  // Construct topic string. If collectionUri already includes version, skip adding prefix
-  let topic = collectionUri;
-  if (topicPrefix && !collectionUri.startsWith(topicPrefix + "/")) {
-    topic = `${topicPrefix}/${collectionUri}`;
-  }
-
-  const client = mqtt.connect(mqttUrl, mqttOpts);
-
-  client.on('connect', () => {
-    console.log('[SensorThings Fetcher] connected, subscribing to', topic);
-    client.subscribe(topic, { qos }, (err, granted) => {
-      if (err) {
-        console.error('[SensorThings Fetcher] subscribe error', err);
-      } else {
-        console.log('[SensorThings Fetcher] granted subscriptions', granted);
-      }
-    });
-  });
-
-  client.on('message', (recvTopic, messageBuffer) => {
-    try {
-      const payloadText = messageBuffer.toString();
-      const entity = JSON.parse(payloadText);
-      // Optionally you might filter or validate the entity
-      onMessage(entity, recvTopic);
-    } catch (err) {
-      console.error('[SensorThings Fetcher] failed to parse message', err, messageBuffer.toString());
+    // Construct topic string. If collectionUri already includes version, skip adding prefix
+    let topic = collectionUri;
+    if (topicPrefix && !collectionUri.startsWith(topicPrefix + "/")) {
+        topic = `${topicPrefix}/${collectionUri}`;
     }
-  });
 
-  client.on('error', (err) => {
-    console.error('[SensorThings Fetcher] client error', err);
-  });
+    const client = mqtt.connect(mqttUrl, mqttOpts);
 
-  function unsubscribe() {
-    client.unsubscribe(topic, (err) => {
-      if (err) console.warn('[SensorThings Fetcher] unsubscribe error', err);
+    client.on("connect", () => {
+        console.log("[SensorThings Fetcher] connected, subscribing to", topic);
+        client.subscribe(topic, { qos }, (err, granted) => {
+            if (err) {
+                console.error("[SensorThings Fetcher] subscribe error", err);
+            } else {
+                console.debug(
+                    "[SensorThings Fetcher] granted subscriptions",
+                    granted,
+                );
+            }
+        });
     });
-    client.end();
-  }
 
-  return {
-    unsubscribe
-  };
+    client.on("message", (recvTopic, messageBuffer) => {
+        try {
+            const payloadText = messageBuffer.toString();
+            const entity = JSON.parse(payloadText);
+            // Optionally you might filter or validate the entity
+            console.log(
+                `Emitting update for topic ${recvTopic}: ${JSON.stringify(entity, null, 2)}`,
+            );
+            onMessage(entity, recvTopic);
+        } catch (err) {
+            console.error(
+                "[SensorThings Fetcher] failed to parse message",
+                err,
+                messageBuffer.toString(),
+            );
+        }
+    });
+
+    client.on("error", (err) => {
+        console.error("[SensorThings Fetcher] client error", err);
+    });
+
+    function unsubscribe() {
+        client.unsubscribe(topic, (err) => {
+            if (err)
+                console.warn("[SensorThings Fetcher] unsubscribe error", err);
+        });
+        client.end();
+    }
+
+    return {
+        unsubscribe,
+    };
 }
