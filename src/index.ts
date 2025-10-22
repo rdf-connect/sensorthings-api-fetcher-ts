@@ -13,7 +13,7 @@ import type {
     Thing,
 } from "./types";
 import { rateLimitedFetch } from "./ratelimit";
-import { subscribeToSensorThingsCollection } from "./mqttSubscribe";
+
 export type {
     DataStream,
     ExtractedData,
@@ -29,7 +29,8 @@ type TemplateArgs = {
     datastream: string;
     datastreamCollection: string;
     writer: Writer;
-    mqttURL: string;
+    follow: boolean;
+    maxDatastreams: number;
 };
 
 /**
@@ -52,8 +53,11 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
      */
 
     datastreams: string[];
+    processedObservations: Set<string>;
 
     async init(this: TemplateArgs & this): Promise<void> {
+        this.processedObservations = new Set();
+
         if (!this.datastream && !this.datastreamCollection) {
             throw new Error(
                 "The SensorThings API Fetcher requires either the datastream or datastreamcollection parameter to be provided.",
@@ -94,11 +98,14 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
      */
     async produce(this: TemplateArgs & this): Promise<void> {
         try {
-            for (const datastreamURI of this.datastreams) {
-                await processDatastream(
+            const datastreamsToFollow = this.maxDatastreams
+                ? this.datastreams
+                : this.datastreams.slice(0, this.maxDatastreams);
+            for (const datastreamURI of datastreamsToFollow) {
+                await this.processDataStream(
                     datastreamURI,
                     this.writer,
-                    this.mqttURL,
+                    this.follow,
                 );
             }
             this.writer.close();
@@ -109,85 +116,92 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
 
         // Function to start the production of data, starting the pipeline.
     }
-}
 
-async function processDatastream(
-    datastreamURI: string,
-    writer: Writer,
-    mqttURL?: string,
-) {
-    // Extract the datastream observations back-to-front
-    log(`Processing datastream: ${datastreamURI}`);
-    const { datastream, thing, locations, sensor, observedProperty } =
-        await extractMetadata(datastreamURI);
+    async processDataStream(
+        datastreamURI: string,
+        writer: Writer,
+        follow?: boolean,
+    ) {
+        // Extract the datastream observations back-to-front
+        log(`Processing datastream: ${datastreamURI}`);
+        const metadata = await extractMetadata(datastreamURI);
 
-    const observationsLink = datastream["Observations@iot.navigationLink"];
+        log(`Datastream metadata: ${JSON.stringify(metadata, null, 2)}`);
 
-    let nextLink: string | undefined = observationsLink;
-    let extracted: {
-        observation: ObservationInput;
-        featureOfInterest: FeatureOfInterest;
-    }[] = [];
+        const observationsLink =
+            metadata.datastream["Observations@iot.navigationLink"];
 
-    // setup the back-to-front filter for the observations
-    if (nextLink)
-        nextLink = nextLink.includes("?")
-            ? nextLink + "&$orderby=resultTime%20asc"
-            : nextLink + "?$orderby=resultTime%20asc";
+        let nextLink: string | undefined = observationsLink;
 
-    let metadata:
-        | {
-              datastream: DataStream;
-              thing: Thing;
-              featureOfInterest: FeatureOfInterest;
-              locations: Location[];
-              sensor: Sensor;
-              observedProperty: ObservedProperty;
-          }
-        | undefined;
+        // setup the back-to-front filter for the observations
+        if (nextLink)
+            nextLink = nextLink.includes("?")
+                ? nextLink + "&$orderby=resultTime%20asc"
+                : nextLink + "?$orderby=resultTime%20asc";
 
-    while (nextLink) {
-        const info = await extractObservations(nextLink);
-        extracted = info.extracted;
-        nextLink = info.nextLink;
-        for (const { observation, featureOfInterest } of extracted) {
-            if (!metadata) {
-                metadata = await prepareMetadataObject(
-                    {
-                        datastream,
-                        thing,
-                        featureOfInterest,
-                        locations,
-                        sensor,
-                        observedProperty,
-                    },
-                    observation,
-                );
-            }
-            const exportObject = await buildExportedObservationObject(
-                observation,
-                metadata,
-            );
-            await writer.string(JSON.stringify(exportObject, null, 2));
-        }
+        this.processPagedObservations(observationsLink, metadata, writer);
     }
 
-    if (mqttURL) {
-        console.debug(`Subscribing to the MQTT endpoint at ${mqttURL}`);
-        // Setup MQTT subscription to keep up to date with new observations
-        let topic = new URL(observationsLink).pathname;
-        topic = topic.startsWith("/") ? topic.replace(/^\/+/, "") : topic;
-        subscribeToSensorThingsCollection(
-            topic,
-            { mqttUrl: mqttURL },
-            async (message) => {
-                const observation: ObservationInput = message;
-                if (!metadata || !metadata.featureOfInterest) {
+    async processPagedObservations(
+        startURL: string,
+        metadataInfo: {
+            datastream: DataStream;
+            thing: Thing;
+            locations: Location[];
+            sensor: Sensor;
+            observedProperty: ObservedProperty;
+        },
+        writer: Writer,
+        follow?: boolean,
+    ) {
+        let previousLink: string | undefined = undefined;
+        let nextLink: string | undefined = startURL;
+
+        let extracted: {
+            observation: ObservationInput;
+            featureOfInterest: FeatureOfInterest;
+        }[] = [];
+
+        const { datastream, thing, locations, sensor, observedProperty } =
+            metadataInfo;
+
+        let metadata:
+            | {
+                  datastream: DataStream;
+                  thing: Thing;
+                  featureOfInterest: FeatureOfInterest;
+                  locations: Location[];
+                  sensor: Sensor;
+                  observedProperty: ObservedProperty;
+              }
+            | undefined;
+
+        // We follow the collection page per page
+        while (nextLink) {
+            log(`Processing observations in page ${nextLink})`);
+
+            const info = await extractObservations(nextLink);
+            extracted = info.extracted;
+            previousLink = nextLink.slice();
+            nextLink = info.nextLink;
+
+            for (const { observation, featureOfInterest } of extracted) {
+                // Skip processed observations
+                if (
+                    this.processedObservations.has(observation["@iot.selfLink"])
+                ) {
+                    log(
+                        `Skipping observation ${observation["@iot.selfLink"]} due to prior emission`,
+                    );
+                    continue;
+                }
+
+                if (!metadata) {
                     metadata = await prepareMetadataObject(
                         {
                             datastream,
                             thing,
-                            featureOfInterest: undefined,
+                            featureOfInterest,
                             locations,
                             sensor,
                             observedProperty,
@@ -195,17 +209,40 @@ async function processDatastream(
                         observation,
                     );
                 }
+
+                // Build the combined observation + all metadata object for easy RML mapping
                 const exportObject = await buildExportedObservationObject(
                     observation,
                     metadata,
                 );
 
-                console.debug(
-                    `Pushed newly created entry for topic ${topic}:\n${JSON.stringify(exportObject, null, 2)}`,
-                );
+                // Save which observations have already been explored
+                this.processedObservations.add(observation["@iot.selfLink"]);
+
+                // Emit the resulting observation
                 await writer.string(JSON.stringify(exportObject, null, 2));
-            },
-        );
+            }
+        }
+
+        if (follow) {
+            setTimeout(
+                () =>
+                    // We start again at the previously last retrieved offset, since we are going OLD -> NEW (ascending observations)
+                    // This way, we prevent new additions messing up while we follow, and we can continue where we left of with the previous offset.
+                    // With the way the above loop works, previouslink should never be undefined when arriving here.
+                    this.processPagedObservations(
+                        previousLink as string,
+                        metadataInfo,
+                        writer,
+                        follow,
+                    ),
+                30 * 60 * 1000,
+            );
+        } else {
+            // We cannot close the writer in case other datastreams are also being followed
+            // And its not that important here to make sure the stream closes?
+            // writer.close();
+        }
     }
 }
 
