@@ -108,15 +108,18 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                     this.follow,
                 );
             }
+
             if (!this.follow) {
                 log(
                     `Finished processing datastreams ${datastreamsToFollow.join(", ")}`,
                 );
-                this.writer.close();
+                await this.writer.close();
+            } else {
+                await new Promise((resolve, reject) => {});
             }
         } catch (e) {
             console.error("Error while extracting from SensorThings API: ", e);
-            this.writer.close();
+            await this.writer.close();
         }
 
         // Function to start the production of data, starting the pipeline.
