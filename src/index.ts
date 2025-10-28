@@ -108,7 +108,12 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                     this.follow,
                 );
             }
-            this.writer.close();
+            if (!this.follow) {
+                log(
+                    `Finished processing datastreams ${datastreamsToFollow.join(", ")}`,
+                );
+                this.writer.close();
+            }
         } catch (e) {
             console.error("Error while extracting from SensorThings API: ", e);
             this.writer.close();
@@ -139,7 +144,12 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                 ? nextLink + "&$orderby=resultTime%20asc"
                 : nextLink + "?$orderby=resultTime%20asc";
 
-        this.processPagedObservations(observationsLink, metadata, writer);
+        this.processPagedObservations(
+            observationsLink,
+            metadata,
+            writer,
+            follow,
+        );
     }
 
     async processPagedObservations(
