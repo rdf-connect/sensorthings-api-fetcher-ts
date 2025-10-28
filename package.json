@@ -1,6 +1,6 @@
 {
   "name": "@rdfc/sensorthings-api-fetcher-ts",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Processor to fetch SensorThings API content.",
   "type": "module",
   "main": "lib/index.js",
