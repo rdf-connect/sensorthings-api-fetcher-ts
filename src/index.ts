@@ -188,7 +188,7 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
 
         // We follow the collection page per page
         while (nextLink) {
-            log(`Processing observations in page ${nextLink})`);
+            log(`Processing observations in page ${nextLink}`);
 
             const info = await extractObservations(nextLink);
             extracted = info.extracted;
