@@ -23,6 +23,11 @@ rdfc:SensorThingsFetcher rdfc:jsImplementationOf rdfc:Processor;
         sh:datatype xsd:string;
         sh:maxCount 1;
     ], [
+        sh:path rdfc:datastreams;
+        sh:name "datastreams";
+        sh:datatype xsd:string;
+        sh:maxCount 1;
+    ], [
         sh:class rdfc:Writer;
         sh:path rdfc:writer;
         sh:name "writer";
@@ -37,5 +42,10 @@ rdfc:SensorThingsFetcher rdfc:jsImplementationOf rdfc:Processor;
         sh:path rdfc:maxDatastreams;
         sh:name "maxDatastreams";
         sh:datatype xsd:integer;
+        sh:maxCount 1;
+    ], [
+        sh:path rdfc:mqttBrokerUrl;
+        sh:name "mqttBrokerUrl";
+        sh:datatype xsd:string;
         sh:maxCount 1;
     ].
