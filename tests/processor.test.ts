@@ -1,29 +1,28 @@
 import { describe, expect, test } from "vitest";
-import { checkProcDefinition, getProc } from "@rdfc/js-runner/lib/testUtils";
+import { checkProcDefinition, createWriter, logger } from "@rdfc/js-runner/lib/testUtils";
+import { FullProc } from "@rdfc/js-runner";
 
-import { SensorThingsFetcher, TemplateProcessor } from "../src";
+import { SensorThingsFetcher } from "../src";
 
 describe("Template processor tests", async () => {
     test("rdfc:SensorThingsFetcher is properly defined", async () => {
-        const processorConfig = `
-        @prefix rdfc: <https://w3id.org/rdf-connect#>.
-
-        <http://example.com/ns#processor> a rdfc:SensorThingsFetcher;
-          rdfc:url <url>;
-          rdfc:writer <jw>.
-        `;
-
         const configLocation = process.cwd() + "/processor.ttl";
         await checkProcDefinition(configLocation, "SensorThingsFetcher");
 
-        const processor = await getProc<SensorThingsFetcher>(
-            processorConfig,
-            "SensorThingsFetcher",
-            configLocation,
+        const [writer] = createWriter();
+        const processor = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
+            {
+                datastream: "https://iot.hamburg.de/v1.1/Datastreams(29728)",
+                follow: false,
+                writer,
+            },
+            logger,
         );
+
         await processor.init();
 
         expect(processor.writer?.constructor.name).toBe("WriterInstance");
-        expect(processor.url).toBeTypeOf("string");
+        expect(processor.datastream).toBeTypeOf("string");
+        expect(processor.inputDatastreams).toHaveLength(1);
     });
 });
