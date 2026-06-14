@@ -24,9 +24,24 @@ Next, you can add the JS/TS TemplateProcessor to your pipeline configuration as 
 
 # fetcher to get SensorThings API data
 <fetcher> a rdfc:SensorThingsFetcher;
-  rdfc:datastream "https://<endpoint>/Datastreams";
+  rdfc:datastream "https://<endpoint>/Datastreams(<id>)";
   rdfc:writer <writeChannel> .
 ```
+
+To fetch multiple datastreams, repeat `rdfc:datastream` values. RDF-Connect
+maps these repeated values to the processor's `datastream` argument.
+
+```turtle
+<fetcher> a rdfc:SensorThingsFetcher;
+  rdfc:datastream "https://iot.hamburg.de/v1.1/Datastreams(29728)",
+                 "https://iot.hamburg.de/v1.1/Datastreams(30936)";
+  rdfc:follow true;
+  rdfc:mqttBrokerUrl "mqtt://example-broker";
+  rdfc:writer <writeChannel> .
+```
+
+Exactly one input source should be configured: repeated `rdfc:datastream` or a single `rdfc:datastreamCollection`.
+Here, `rdfc:maxDatastreams` limits the amount of datastreams discovered through `rdfc:datastreamCollection`.
 
 ## Data output
 

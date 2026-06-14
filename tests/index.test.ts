@@ -6,7 +6,12 @@ vi.mock("../src/ratelimit", () => ({
     rateLimitedFetch: vi.fn(),
 }));
 
+vi.mock("../src/mqttSubscribe", () => ({
+    subscribeToDatastreamUpdates: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { rateLimitedFetch } from "../src/ratelimit";
+import { subscribeToDatastreamUpdates } from "../src/mqttSubscribe";
 import { SensorThingsFetcher } from "../src";
 
 type JsonResponse = {
@@ -17,10 +22,14 @@ const DS_1 = "https://iot.hamburg.de/v1.1/Datastreams(29728)";
 const DS_2 = "https://iot.hamburg.de/v1.1/Datastreams(30936)";
 
 const mockedRateLimitedFetch = vi.mocked(rateLimitedFetch);
+const mockedSubscribeToDatastreamUpdates = vi.mocked(
+    subscribeToDatastreamUpdates,
+);
 
 describe("SensorThingsFetcher functional tests", () => {
     beforeEach(() => {
         mockedRateLimitedFetch.mockReset();
+        mockedSubscribeToDatastreamUpdates.mockClear();
     });
 
     test("loads two datastreams and emits observation+metadata for each observation", async () => {
@@ -44,7 +53,7 @@ describe("SensorThingsFetcher functional tests", () => {
         const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
             {
                 writer: outputWriter,
-                datastreams: JSON.stringify([DS_1, DS_2]),
+                datastream: [DS_1, DS_2],
                 follow: false,
             },
             logger,
@@ -111,6 +120,123 @@ describe("SensorThingsFetcher functional tests", () => {
         expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
             "https://iot.hamburg.de/v1.1/Things(10002)/Locations",
         );
+
+        const featureOfInterestRequests = mockedRateLimitedFetch.mock.calls
+            .map(([url]) => url)
+            .filter((url) => url.includes("/FeaturesOfInterest("));
+
+        expect(featureOfInterestRequests.sort()).toEqual(
+            [
+                "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
+                "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)",
+            ].sort(),
+        );
+    });
+
+    test("does not truncate explicit datastream lists with maxDatastreams", async () => {
+        const apiFixtures = buildHamburgFixtures();
+
+        mockedRateLimitedFetch.mockImplementation(async (url: string) => {
+            const body = apiFixtures.get(url);
+            if (!body) {
+                throw new Error(`Unexpected URL requested in test fixture: ${url}`);
+            }
+
+            const response: JsonResponse = {
+                json: async () => structuredClone(body),
+            };
+
+            return response as unknown as Response;
+        });
+
+        const [outputWriter, outputReader] = createWriter();
+
+        const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
+            {
+                writer: outputWriter,
+                datastream: [DS_1, DS_2],
+                follow: false,
+                maxDatastreams: 1,
+            },
+            logger,
+        );
+
+        await proc.init();
+
+        const readPromise = collectStrings(outputReader);
+        await proc.produce();
+        const emitted = await readPromise;
+
+        expect(proc.inputDatastreams).toEqual([DS_1, DS_2]);
+        expect(emitted).toHaveLength(3);
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations?$orderby=resultTime%20asc",
+        );
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations?$orderby=resultTime%20asc",
+        );
+    });
+
+    test("subscribes to all datastreams before fetching backlog in follow mode", async () => {
+        const apiFixtures = buildHamburgFixtures();
+        const calls: string[] = [];
+        const events: string[] = [];
+
+        mockedSubscribeToDatastreamUpdates.mockImplementationOnce(async () => {
+            events.push("subscribe");
+        });
+
+        mockedRateLimitedFetch.mockImplementation(async (url: string) => {
+            calls.push(url);
+
+            if (url.includes("/Observations?")) {
+                events.push("backlog");
+                throw new Error("stop after confirming backlog fetch started");
+            }
+
+            const body = apiFixtures.get(url);
+            if (!body) {
+                throw new Error(`Unexpected URL requested in test fixture: ${url}`);
+            }
+
+            const response: JsonResponse = {
+                json: async () => structuredClone(body),
+            };
+
+            return response as unknown as Response;
+        });
+
+        const [outputWriter] = createWriter();
+        const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
+            {
+                writer: outputWriter,
+                datastream: [DS_1, DS_2],
+                follow: true,
+                mqttBrokerUrl: "mqtt://example.test",
+            },
+            logger,
+        );
+
+        await proc.init();
+        calls.length = 0;
+
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        try {
+            await proc.produce();
+        } finally {
+            consoleError.mockRestore();
+        }
+
+        expect(mockedSubscribeToDatastreamUpdates).toHaveBeenCalledTimes(1);
+        expect(mockedSubscribeToDatastreamUpdates).toHaveBeenCalledWith(
+            expect.objectContaining({
+                brokerUrl: "mqtt://example.test",
+                datastreamUris: [DS_1, DS_2],
+            }),
+        );
+        expect(calls.some((url) => url.includes("/Observations?"))).toBe(true);
+        expect(events[0]).toBe("subscribe");
+        expect(events).toContain("backlog");
     });
 });
 
@@ -267,7 +393,7 @@ function buildHamburgFixtures(): Map<string, unknown> {
                     "@iot.id": 90002,
                     phenomenonTime: "2026-06-01T00:10:00Z/2026-06-01T00:15:00Z",
                     resultTime: "2026-06-01T00:15:00Z",
-                    "FeatureOfInterest@iot.navigationLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
+                    "FeatureOfInterest@iot.navigationLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001-observation-90002)",
                     "Datastreamt@iot.navigationLink": DS_1,
                 },
             ],
