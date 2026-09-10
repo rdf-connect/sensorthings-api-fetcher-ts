@@ -21,7 +21,7 @@ rdfc:SensorThingsFetcher rdfc:jsImplementationOf rdfc:Processor;
         sh:path rdfc:datastream;
         sh:name "datastream";
         sh:datatype xsd:string;
-        sh:maxCount 1;
+        sh:description "Datastream URLs supplied as separate values and/or comma-separated strings. Whitespace is trimmed and empty entries are ignored.";
     ], [
         sh:class rdfc:Writer;
         sh:path rdfc:writer;

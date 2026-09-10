@@ -28,6 +28,20 @@ Next, you can add the JS/TS TemplateProcessor to your pipeline configuration as 
   rdfc:writer <writeChannel> .
 ```
 
+Datastream URLs can be supplied as separate RDF values:
+
+```turtle
+rdfc:datastream "https://iot.hamburg.de/v1.1/Datastreams(26598)", "https://iot.hamburg.de/v1.1/Datastreams(29728)";
+```
+
+Or as a single comma-separated string, which can also be supplied through an environment variable in your pipeline:
+
+```turtle
+rdfc:datastream "https://iot.hamburg.de/v1.1/Datastreams(26598), https://iot.hamburg.de/v1.1/Datastreams(29728)";
+```
+
+Both forms can be mixed. Whitespace around URLs is trimmed and empty entries are ignored. Supply at least one non-empty URL, or use `rdfc:datastreamCollection` instead.
+
 ## Data output
 
 The output stream of the component provides the observation and all connected metadata as a JSON object using the following structure: 

@@ -26,7 +26,7 @@ export type {
 };
 
 type TemplateArgs = {
-    datastream: string;
+    datastream?: string | string[];
     datastreamCollection: string;
     writer: Writer;
     follow: boolean;
@@ -57,13 +57,21 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
 
     async init(this: TemplateArgs & this): Promise<void> {
         this.processedObservations = new Set();
+        const datastreams = (
+            Array.isArray(this.datastream)
+                ? this.datastream
+                : [this.datastream ?? ""]
+        )
+            .flatMap((value) => value.split(","))
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0);
 
-        if (!this.datastream && !this.datastreamCollection) {
+        if (!datastreams.length && !this.datastreamCollection) {
             throw new Error(
                 "The SensorThings API Fetcher requires either the datastream or datastreamcollection parameter to be provided.",
             );
         }
-        if (this.datastream && this.datastreamCollection) {
+        if (datastreams.length && this.datastreamCollection) {
             throw new Error(
                 "The SensorThings API Fetcher requires only a single one of the datastream or datastreamcollection parameters to be provided.",
             );
@@ -77,11 +85,11 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                 this.datastreamCollection,
             );
             this.datastreams = datastreams;
-        } else if (this.datastream) {
+        } else {
             log(
                 `Sensorthings Fetcher initialized for datastream URL: ${this.datastream}`,
             );
-            this.datastreams = [this.datastream];
+            this.datastreams = datastreams;
         }
     }
 
@@ -98,9 +106,10 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
      */
     async produce(this: TemplateArgs & this): Promise<void> {
         try {
-            const datastreamsToFollow = this.maxDatastreams
-                ? this.datastreams
-                : this.datastreams.slice(0, this.maxDatastreams);
+            const datastreamsToFollow = this.datastreams.slice(
+                0,
+                this.maxDatastreams,
+            );
             for (const datastreamURI of datastreamsToFollow) {
                 await this.processDataStream(
                     datastreamURI,
@@ -147,7 +156,7 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                 ? nextLink + "&$orderby=resultTime%20asc"
                 : nextLink + "?$orderby=resultTime%20asc";
 
-        this.processPagedObservations(
+        await this.processPagedObservations(
             observationsLink,
             metadata,
             writer,
