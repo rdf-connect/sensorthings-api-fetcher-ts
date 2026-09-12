@@ -37,7 +37,9 @@ describe("SensorThingsFetcher processor tests", async () => {
 
             const body = apiFixtures.get(url);
             if (!body) {
-                throw new Error(`Unexpected URL requested in test fixture: ${url}`);
+                throw new Error(
+                    `Unexpected URL requested in test fixture: ${url}`,
+                );
             }
 
             return {
@@ -49,13 +51,15 @@ describe("SensorThingsFetcher processor tests", async () => {
         await checkProcDefinition(configLocation, "SensorThingsFetcher");
 
         const [writer] = createWriter();
-        const processor = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
-            {
-                datastream: [DS_1, DS_2],
-                follow: false,
-                writer,
-            },
-            logger,
+        const processor = <FullProc<SensorThingsFetcher>>(
+            new SensorThingsFetcher(
+                {
+                    datastream: [DS_1, DS_2],
+                    follow: false,
+                    writer,
+                },
+                logger,
+            )
         );
 
         await processor.init();
@@ -63,40 +67,50 @@ describe("SensorThingsFetcher processor tests", async () => {
         expect(processor.writer?.constructor.name).toBe("WriterInstance");
         expect(processor.inputDatastreams).toEqual([DS_1, DS_2]);
         expect(processor.metadataByDatastream.size).toBe(2);
-        expect(processor.metadataByDatastream.get(DS_1)?.thing["@iot.selfLink"])
-            .toBe("https://iot.hamburg.de/v1.1/Things(10001)");
-        expect(processor.metadataByDatastream.get(DS_2)?.sensor["@iot.selfLink"])
-            .toBe("https://iot.hamburg.de/v1.1/Sensors(20002)");
+        expect(
+            processor.metadataByDatastream.get(DS_1)?.thing["@iot.selfLink"],
+        ).toBe("https://iot.hamburg.de/v1.1/Things(10001)");
+        expect(
+            processor.metadataByDatastream.get(DS_2)?.sensor["@iot.selfLink"],
+        ).toBe("https://iot.hamburg.de/v1.1/Sensors(20002)");
         expect(requestedUrls).toContain(DS_1);
         expect(requestedUrls).toContain(DS_2);
         expect(requestedUrls).toContain(
             "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
         );
-        expect(requestedUrls).toContain("https://iot.hamburg.de/v1.1/Sensors(20002)");
+        expect(requestedUrls).toContain(
+            "https://iot.hamburg.de/v1.1/Sensors(20002)",
+        );
         expect(requestedUrls).toContain(
             "https://iot.hamburg.de/v1.1/Things(10002)/Locations",
         );
-        expect(requestedUrls.some((url) => url.includes("/Observations")))
-            .toBe(false);
+        expect(requestedUrls.some((url) => url.includes("/Observations"))).toBe(
+            false,
+        );
     });
 
     test("repeated rdfc:datastream values are passed as one datastream array", async () => {
         const apiFixtures = buildMetadataFixtures();
         const requestedUrls: string[] = [];
 
-        vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-            requestedUrls.push(url);
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async (url: string) => {
+                requestedUrls.push(url);
 
-            const body = apiFixtures.get(url);
-            if (!body) {
-                throw new Error(`Unexpected URL requested in test fixture: ${url}`);
-            }
+                const body = apiFixtures.get(url);
+                if (!body) {
+                    throw new Error(
+                        `Unexpected URL requested in test fixture: ${url}`,
+                    );
+                }
 
-            return {
-                ok: true,
-                json: async () => structuredClone(body),
-            } as unknown as Response;
-        }));
+                return {
+                    ok: true,
+                    json: async () => structuredClone(body),
+                } as unknown as Response;
+            }),
+        );
 
         const processor = await getProc<SensorThingsFetcher>(
             `
@@ -133,9 +147,12 @@ function buildMetadataFixtures(): Map<string, unknown> {
         properties: {},
         resultTime: "2026-06-01T01:00:00Z",
         "Thing@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10001)",
-        "Sensor@iot.navigationLink": "https://iot.hamburg.de/v1.1/Sensors(20001)",
-        "ObservedProperty@iot.navigationLink": "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
-        "Observations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations",
+        "Sensor@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Sensors(20001)",
+        "ObservedProperty@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
+        "Observations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations",
     });
 
     fixtures.set(DS_2, {
@@ -150,9 +167,12 @@ function buildMetadataFixtures(): Map<string, unknown> {
         properties: {},
         resultTime: "2026-06-01T01:00:00Z",
         "Thing@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10002)",
-        "Sensor@iot.navigationLink": "https://iot.hamburg.de/v1.1/Sensors(20002)",
-        "ObservedProperty@iot.navigationLink": "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
-        "Observations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations",
+        "Sensor@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Sensors(20002)",
+        "ObservedProperty@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
+        "Observations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations",
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/Things(10001)", {
@@ -161,8 +181,10 @@ function buildMetadataFixtures(): Map<string, unknown> {
         name: "Thing 10001",
         description: "Station A",
         properties: {},
-        "Locations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10001)/Locations",
-        "HistoricalLocations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10001)/HistoricalLocations",
+        "Locations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10001)/Locations",
+        "HistoricalLocations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10001)/HistoricalLocations",
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/Things(10002)", {
@@ -171,8 +193,10 @@ function buildMetadataFixtures(): Map<string, unknown> {
         name: "Thing 10002",
         description: "Station B",
         properties: {},
-        "Locations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10002)/Locations",
-        "HistoricalLocations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10002)/HistoricalLocations",
+        "Locations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10002)/Locations",
+        "HistoricalLocations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10002)/HistoricalLocations",
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/Sensors(20001)", {
@@ -194,7 +218,8 @@ function buildMetadataFixtures(): Map<string, unknown> {
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/ObservedProperties(30001)", {
-        "@iot.selfLink": "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
         "@iot.id": 30001,
         name: "air temperature",
         definition: "https://example.org/temperature",
@@ -202,7 +227,8 @@ function buildMetadataFixtures(): Map<string, unknown> {
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/ObservedProperties(30002)", {
-        "@iot.selfLink": "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
         "@iot.id": 30002,
         name: "relative humidity",
         definition: "https://example.org/humidity",

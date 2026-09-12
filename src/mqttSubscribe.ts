@@ -92,7 +92,10 @@ export async function subscribeToDatastreamUpdates(args: {
 }
 
 function normalizeObservationPayload(
-    parsed: ObservationUpdate | ObservationUpdate[] | { value: ObservationUpdate[] },
+    parsed:
+        | ObservationUpdate
+        | ObservationUpdate[]
+        | { value: ObservationUpdate[] },
 ) {
     if (Array.isArray(parsed)) {
         return parsed;
@@ -119,7 +122,8 @@ async function resolveDatastreamUri(
     const linkedDatastream =
         observation["Datastream@iot.navigationLink"] ??
         observation["Datastreamt@iot.navigationLink"];
-    const datastreamUri = linkedDatastream ?? (await fetchObservationDatastream(observation));
+    const datastreamUri =
+        linkedDatastream ?? (await fetchObservationDatastream(observation));
     if (!datastreamUri) {
         return undefined;
     }
@@ -139,8 +143,9 @@ async function fetchObservationDatastream(observation: ObservationUpdate) {
 }
 
 function isSubscriptionRejected(err: Error | null) {
-    const granted = (err as (Error & { packet?: { granted?: number[] } }) | null)
-        ?.packet?.granted;
+    const granted = (
+        err as (Error & { packet?: { granted?: number[] } }) | null
+    )?.packet?.granted;
 
     return Array.isArray(granted) && granted.every((qos) => qos === 128);
 }

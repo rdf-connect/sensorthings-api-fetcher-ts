@@ -197,9 +197,7 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                 observation: ObservationInput;
             }) => {
                 if (
-                    this.processedObservations.has(
-                        observation["@iot.selfLink"],
-                    )
+                    this.processedObservations.has(observation["@iot.selfLink"])
                 ) {
                     return;
                 }
@@ -284,7 +282,11 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                 ? nextLink + "&$orderby=resultTime%20asc"
                 : nextLink + "?$orderby=resultTime%20asc";
 
-        await this.processPagedObservations(nextLink as string, metadata, writer);
+        await this.processPagedObservations(
+            nextLink as string,
+            metadata,
+            writer,
+        );
     }
 
     async processPagedObservations(
@@ -428,7 +430,7 @@ async function extractObservations(url: string): Promise<{
 }> {
     log(`Extracting observations from page ${url}`);
     const page = await rateLimitedFetch(url);
-    
+
     log(`PAGE ${JSON.stringify(page, null, 2)}`);
 
     const body = (await page.json()) as {
@@ -471,7 +473,9 @@ async function prepareMetadataObject(
 
     const thing = {
         ...metadata.thing,
-        locations: metadata.locations.map((location) => location["@iot.selfLink"]),
+        locations: metadata.locations.map(
+            (location) => location["@iot.selfLink"],
+        ),
     };
 
     let featureOfInterest = metadata.featureOfInterest;

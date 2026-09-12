@@ -1,6 +1,6 @@
 {
   "name": "@rdfc/sensorthings-api-fetcher-ts",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Processor to fetch SensorThings API content.",
   "type": "module",
   "main": "lib/index.js",
@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "tsc && tsc-alias",
+    "pretest": "npm run build",
     "test": "vitest run --coverage --coverage.include src",
     "prepare": "husky"
   },

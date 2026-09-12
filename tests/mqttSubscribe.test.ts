@@ -31,10 +31,12 @@ describe("subscribeToDatastreamUpdates", () => {
                 callback(null);
             });
         const client = {
-            on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
-                handlers.set(event, handler);
-                return client;
-            }),
+            on: vi.fn(
+                (event: string, handler: (...args: unknown[]) => unknown) => {
+                    handlers.set(event, handler);
+                    return client;
+                },
+            ),
             subscribe,
         };
 
@@ -70,12 +72,14 @@ describe("subscribeToDatastreamUpdates", () => {
             "v1.1/Observations",
             Buffer.from(
                 JSON.stringify({
-                    "@iot.selfLink": "https://iot.hamburg.de/v1.1/Observations(1)",
+                    "@iot.selfLink":
+                        "https://iot.hamburg.de/v1.1/Observations(1)",
                     "@iot.id": 1,
                     phenomenonTime: "2026-06-14T00:00:00Z",
                     resultTime: "2026-06-14T00:00:00Z",
                     "Datastream@iot.navigationLink": DS_1,
-                    "FeatureOfInterest@iot.navigationLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(1)",
+                    "FeatureOfInterest@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/FeaturesOfInterest(1)",
                 }),
             ),
         );
@@ -84,12 +88,15 @@ describe("subscribeToDatastreamUpdates", () => {
             "v1.1/Observations",
             Buffer.from(
                 JSON.stringify({
-                    "@iot.selfLink": "https://iot.hamburg.de/v1.1/Observations(2)",
+                    "@iot.selfLink":
+                        "https://iot.hamburg.de/v1.1/Observations(2)",
                     "@iot.id": 2,
                     phenomenonTime: "2026-06-14T00:00:00Z",
                     resultTime: "2026-06-14T00:00:00Z",
-                    "Datastream@iot.navigationLink": "https://iot.hamburg.de/v1.1/Datastreams(99999)",
-                    "FeatureOfInterest@iot.navigationLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(2)",
+                    "Datastream@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/Datastreams(99999)",
+                    "FeatureOfInterest@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/FeaturesOfInterest(2)",
                 }),
             ),
         );

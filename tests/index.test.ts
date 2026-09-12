@@ -38,7 +38,9 @@ describe("SensorThingsFetcher functional tests", () => {
         mockedRateLimitedFetch.mockImplementation(async (url: string) => {
             const body = apiFixtures.get(url);
             if (!body) {
-                throw new Error(`Unexpected URL requested in test fixture: ${url}`);
+                throw new Error(
+                    `Unexpected URL requested in test fixture: ${url}`,
+                );
             }
 
             const response: JsonResponse = {
@@ -81,23 +83,30 @@ describe("SensorThingsFetcher functional tests", () => {
         for (const item of parsed) {
             expect(item.datastream?.["@iot.selfLink"]).toBeTypeOf("string");
             expect(item.datastream?.thing).toBe(item.thing?.["@iot.selfLink"]);
-            expect(item.datastream?.sensor).toBe(item.sensor?.["@iot.selfLink"]);
+            expect(item.datastream?.sensor).toBe(
+                item.sensor?.["@iot.selfLink"],
+            );
             expect(item.datastream?.observedProperty).toBe(
                 item.observedProperty?.["@iot.selfLink"],
             );
             expect(Array.isArray(item.locations)).toBe(true);
             expect(item.locations.length).toBeGreaterThan(0);
-            expect(item.featureOfInterest?.["@iot.selfLink"]).toBeTypeOf("string");
+            expect(item.featureOfInterest?.["@iot.selfLink"]).toBeTypeOf(
+                "string",
+            );
             expect(item.observation?.datastream).toBe(
                 item.datastream?.["@iot.selfLink"],
             );
             expect(item.observation?.featureOfInterest).toBe(
                 item.featureOfInterest?.["@iot.selfLink"],
             );
-            expect(item.observation?.phenomenonTime?.hasBeginning?.inXSDDateTimeStamp)
-                .toBeTypeOf("string");
-            expect(item.observation?.phenomenonTime?.hasEnd?.inXSDDateTimeStamp)
-                .toBeTypeOf("string");
+            expect(
+                item.observation?.phenomenonTime?.hasBeginning
+                    ?.inXSDDateTimeStamp,
+            ).toBeTypeOf("string");
+            expect(
+                item.observation?.phenomenonTime?.hasEnd?.inXSDDateTimeStamp,
+            ).toBeTypeOf("string");
             expect(item.observation?.phenomenonTime?.hasXSDDuration).toBeTypeOf(
                 "string",
             );
@@ -139,7 +148,9 @@ describe("SensorThingsFetcher functional tests", () => {
         mockedRateLimitedFetch.mockImplementation(async (url: string) => {
             const body = apiFixtures.get(url);
             if (!body) {
-                throw new Error(`Unexpected URL requested in test fixture: ${url}`);
+                throw new Error(
+                    `Unexpected URL requested in test fixture: ${url}`,
+                );
             }
 
             const response: JsonResponse = {
@@ -196,7 +207,9 @@ describe("SensorThingsFetcher functional tests", () => {
 
             const body = apiFixtures.get(url);
             if (!body) {
-                throw new Error(`Unexpected URL requested in test fixture: ${url}`);
+                throw new Error(
+                    `Unexpected URL requested in test fixture: ${url}`,
+                );
             }
 
             const response: JsonResponse = {
@@ -220,7 +233,9 @@ describe("SensorThingsFetcher functional tests", () => {
         await proc.init();
         calls.length = 0;
 
-        const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+        const consoleError = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
         try {
             await proc.produce();
         } finally {
@@ -240,7 +255,9 @@ describe("SensorThingsFetcher functional tests", () => {
     });
 });
 
-async function collectStrings(reader: { strings: () => AsyncIterable<string> }) {
+async function collectStrings(reader: {
+    strings: () => AsyncIterable<string>;
+}) {
     const values: string[] = [];
     for await (const item of reader.strings()) {
         values.push(item);
@@ -263,9 +280,12 @@ function buildHamburgFixtures(): Map<string, unknown> {
         properties: {},
         resultTime: "2026-06-01T01:00:00Z",
         "Thing@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10001)",
-        "Sensor@iot.navigationLink": "https://iot.hamburg.de/v1.1/Sensors(20001)",
-        "ObservedProperty@iot.navigationLink": "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
-        "Observations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations",
+        "Sensor@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Sensors(20001)",
+        "ObservedProperty@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
+        "Observations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations",
     });
 
     fixtures.set(DS_2, {
@@ -280,9 +300,12 @@ function buildHamburgFixtures(): Map<string, unknown> {
         properties: {},
         resultTime: "2026-06-01T01:00:00Z",
         "Thing@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10002)",
-        "Sensor@iot.navigationLink": "https://iot.hamburg.de/v1.1/Sensors(20002)",
-        "ObservedProperty@iot.navigationLink": "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
-        "Observations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations",
+        "Sensor@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Sensors(20002)",
+        "ObservedProperty@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
+        "Observations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations",
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/Things(10001)", {
@@ -291,8 +314,10 @@ function buildHamburgFixtures(): Map<string, unknown> {
         name: "Thing 10001",
         description: "Station A",
         properties: {},
-        "Locations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10001)/Locations",
-        "HistoricalLocations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10001)/HistoricalLocations",
+        "Locations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10001)/Locations",
+        "HistoricalLocations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10001)/HistoricalLocations",
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/Things(10002)", {
@@ -301,8 +326,10 @@ function buildHamburgFixtures(): Map<string, unknown> {
         name: "Thing 10002",
         description: "Station B",
         properties: {},
-        "Locations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10002)/Locations",
-        "HistoricalLocations@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10002)/HistoricalLocations",
+        "Locations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10002)/Locations",
+        "HistoricalLocations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10002)/HistoricalLocations",
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/Sensors(20001)", {
@@ -324,7 +351,8 @@ function buildHamburgFixtures(): Map<string, unknown> {
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/ObservedProperties(30001)", {
-        "@iot.selfLink": "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
         "@iot.id": 30001,
         name: "air temperature",
         definition: "https://example.org/temperature",
@@ -332,7 +360,8 @@ function buildHamburgFixtures(): Map<string, unknown> {
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/ObservedProperties(30002)", {
-        "@iot.selfLink": "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
         "@iot.id": 30002,
         name: "relative humidity",
         definition: "https://example.org/humidity",
@@ -372,15 +401,18 @@ function buildHamburgFixtures(): Map<string, unknown> {
         {
             value: [
                 {
-                    "@iot.selfLink": "https://iot.hamburg.de/v1.1/Observations(90001)",
+                    "@iot.selfLink":
+                        "https://iot.hamburg.de/v1.1/Observations(90001)",
                     "@iot.id": 90001,
                     phenomenonTime: "2026-06-01T00:00:00Z/2026-06-01T00:05:00Z",
                     resultTime: "2026-06-01T00:05:00Z",
-                    "FeatureOfInterest@iot.navigationLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
+                    "FeatureOfInterest@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
                     "Datastreamt@iot.navigationLink": DS_1,
                 },
             ],
-            "@iot.nextLink": "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations?$skip=1&$orderby=resultTime%20asc",
+            "@iot.nextLink":
+                "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations?$skip=1&$orderby=resultTime%20asc",
         },
     );
 
@@ -389,11 +421,13 @@ function buildHamburgFixtures(): Map<string, unknown> {
         {
             value: [
                 {
-                    "@iot.selfLink": "https://iot.hamburg.de/v1.1/Observations(90002)",
+                    "@iot.selfLink":
+                        "https://iot.hamburg.de/v1.1/Observations(90002)",
                     "@iot.id": 90002,
                     phenomenonTime: "2026-06-01T00:10:00Z/2026-06-01T00:15:00Z",
                     resultTime: "2026-06-01T00:15:00Z",
-                    "FeatureOfInterest@iot.navigationLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001-observation-90002)",
+                    "FeatureOfInterest@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001-observation-90002)",
                     "Datastreamt@iot.navigationLink": DS_1,
                 },
             ],
@@ -405,11 +439,13 @@ function buildHamburgFixtures(): Map<string, unknown> {
         {
             value: [
                 {
-                    "@iot.selfLink": "https://iot.hamburg.de/v1.1/Observations(91001)",
+                    "@iot.selfLink":
+                        "https://iot.hamburg.de/v1.1/Observations(91001)",
                     "@iot.id": 91001,
                     phenomenonTime: "2026-06-01T00:20:00Z/2026-06-01T00:25:00Z",
                     resultTime: "2026-06-01T00:25:00Z",
-                    "FeatureOfInterest@iot.navigationLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)",
+                    "FeatureOfInterest@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)",
                     "Datastreamt@iot.navigationLink": DS_2,
                 },
             ],
@@ -417,7 +453,8 @@ function buildHamburgFixtures(): Map<string, unknown> {
     );
 
     fixtures.set("https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)", {
-        "@iot.selfLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
         name: "Feature 40001",
         description: "Feature of interest for DS 29728",
         encodingType: "application/vnd.geo+json",
@@ -426,7 +463,8 @@ function buildHamburgFixtures(): Map<string, unknown> {
     });
 
     fixtures.set("https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)", {
-        "@iot.selfLink": "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)",
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)",
         name: "Feature 40002",
         description: "Feature of interest for DS 30936",
         encodingType: "application/vnd.geo+json",
