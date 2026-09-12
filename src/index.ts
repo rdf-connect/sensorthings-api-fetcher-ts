@@ -1,4 +1,5 @@
 import { Processor, type Writer } from "@rdfc/js-runner";
+import { subscribeToDatastreamUpdates } from "./mqttSubscribe";
 
 import type {
     DataStream,
@@ -26,11 +27,12 @@ export type {
 };
 
 type TemplateArgs = {
-    datastream?: string | string[];
-    datastreamCollection: string;
+    datastream?: string[] | string;
+    datastreamCollection?: string;
     writer: Writer;
     follow: boolean;
-    maxDatastreams: number;
+    maxDatastreams?: number | string;
+    mqttBrokerUrl?: string;
 };
 
 /**
@@ -52,45 +54,68 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
      * This is the perfect location to start things like database connections.
      */
 
-    datastreams: string[];
+    inputDatastreams: string[];
     processedObservations: Set<string>;
+    featureOfInterestByDatastream: Map<string, FeatureOfInterest>;
+    metadataByDatastream: Map<
+        string,
+        {
+            datastream: DataStream;
+            thing: Thing;
+            locations: Location[];
+            sensor: Sensor;
+            observedProperty: ObservedProperty;
+        }
+    >;
 
     async init(this: TemplateArgs & this): Promise<void> {
         this.processedObservations = new Set();
-        const datastreams = (
-            Array.isArray(this.datastream)
-                ? this.datastream
-                : [this.datastream ?? ""]
-        )
-            .flatMap((value) => value.split(","))
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0);
+        this.featureOfInterestByDatastream = new Map();
+        this.metadataByDatastream = new Map();
 
-        if (!datastreams.length && !this.datastreamCollection) {
+        const parsedDatastreams = normalizeDatastreams(this.datastream);
+        const hasDatastream = parsedDatastreams.length > 0;
+        const hasCollection = !!this.datastreamCollection;
+        const configuredSources = [hasDatastream, hasCollection].filter(
+            Boolean,
+        ).length;
+
+        log(`datastream ${this.datastream}`);
+        log(`parsedDatastreams ${parsedDatastreams}`);
+        log(`configuredSources ${configuredSources}`);
+
+        if (configuredSources !== 1) {
             throw new Error(
-                "The SensorThings API Fetcher requires either the datastream or datastreamcollection parameter to be provided.",
+                "The SensorThings API Fetcher requires exactly one input source: datastream or datastreamCollection.",
             );
         }
-        if (datastreams.length && this.datastreamCollection) {
-            throw new Error(
-                "The SensorThings API Fetcher requires only a single one of the datastream or datastreamcollection parameters to be provided.",
-            );
-        }
 
-        if (this.datastreamCollection) {
+        if (hasCollection) {
             log(
                 `Sensorthings Fetcher initialized for datastream collection URL: ${this.datastreamCollection}`,
             );
             const datastreams = await extractDatastreams(
-                this.datastreamCollection,
+                this.datastreamCollection as string,
             );
-            this.datastreams = datastreams;
+            this.inputDatastreams = this.limitCollectionDatastreams(
+                dedupe(datastreams),
+            );
         } else {
             log(
                 `Sensorthings Fetcher initialized for datastream URL: ${this.datastream}`,
             );
-            this.datastreams = datastreams;
+            this.inputDatastreams = dedupe(parsedDatastreams);
         }
+
+        log(`Initialized with ${this.inputDatastreams.length} datastream(s)`);
+
+        await runWithConcurrency(
+            this.getDatastreamsToProcess(),
+            6,
+            async (datastreamURI) => {
+                await this.getMetadataInfo(datastreamURI);
+            },
+        );
     }
 
     /**
@@ -106,25 +131,33 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
      */
     async produce(this: TemplateArgs & this): Promise<void> {
         try {
-            const datastreamsToFollow = this.datastreams.slice(
-                0,
-                this.maxDatastreams,
-            );
-            for (const datastreamURI of datastreamsToFollow) {
-                await this.processDataStream(
-                    datastreamURI,
-                    this.writer,
-                    this.follow,
-                );
+            const datastreamsToProcess = this.getDatastreamsToProcess();
+
+            if (this.follow) {
+                if (!this.mqttBrokerUrl) {
+                    throw new Error(
+                        "follow=true requires the mqttBrokerUrl parameter.",
+                    );
+                }
+
+                await this.subscribeToUpdates(datastreamsToProcess);
             }
+
+            await runWithConcurrency(
+                datastreamsToProcess,
+                6,
+                async (datastreamURI) => {
+                    await this.processDataStream(datastreamURI, this.writer);
+                },
+            );
 
             if (!this.follow) {
                 log(
-                    `Finished processing datastreams ${datastreamsToFollow.join(", ")}`,
+                    `Finished processing datastreams ${datastreamsToProcess.join(", ")}`,
                 );
                 await this.writer.close();
             } else {
-                await new Promise((resolve, reject) => {});
+                await new Promise(() => {});
             }
         } catch (e) {
             console.error("Error while extracting from SensorThings API: ", e);
@@ -134,14 +167,107 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
         // Function to start the production of data, starting the pipeline.
     }
 
-    async processDataStream(
-        datastreamURI: string,
-        writer: Writer,
-        follow?: boolean,
+    getDatastreamsToProcess(this: TemplateArgs & this) {
+        return this.inputDatastreams;
+    }
+
+    limitCollectionDatastreams(
+        this: TemplateArgs & this,
+        datastreams: string[],
     ) {
+        const maxDatastreams = Number(this.maxDatastreams);
+
+        return Number.isFinite(maxDatastreams) && maxDatastreams > 0
+            ? datastreams.slice(0, maxDatastreams)
+            : datastreams;
+    }
+
+    async subscribeToUpdates(
+        this: TemplateArgs & this,
+        datastreamsToProcess: string[],
+    ) {
+        await subscribeToDatastreamUpdates({
+            brokerUrl: this.mqttBrokerUrl as string,
+            datastreamUris: datastreamsToProcess,
+            onObservation: async ({
+                datastreamUri,
+                observation,
+            }: {
+                datastreamUri: string;
+                observation: ObservationInput;
+            }) => {
+                if (
+                    this.processedObservations.has(observation["@iot.selfLink"])
+                ) {
+                    return;
+                }
+
+                const metadataInfo = await this.getMetadataInfo(datastreamUri);
+                const featureOfInterest = await this.getFeatureOfInterest(
+                    datastreamUri,
+                    observation,
+                );
+                const metadata = await prepareMetadataObject(
+                    {
+                        datastream: metadataInfo.datastream,
+                        thing: metadataInfo.thing,
+                        featureOfInterest,
+                        locations: metadataInfo.locations,
+                        sensor: metadataInfo.sensor,
+                        observedProperty: metadataInfo.observedProperty,
+                    },
+                    observation,
+                );
+
+                const exportObject = await buildExportedObservationObject(
+                    observation,
+                    metadata,
+                );
+
+                this.processedObservations.add(observation["@iot.selfLink"]);
+                await this.writer.string(JSON.stringify(exportObject, null, 2));
+            },
+            onError: (err: unknown) => console.error("MQTT follow error:", err),
+        });
+    }
+
+    async getMetadataInfo(datastreamURI: string) {
+        const existingMetadata = this.metadataByDatastream.get(datastreamURI);
+        if (existingMetadata) {
+            return existingMetadata;
+        }
+
+        const extractedMetadata = await extractMetadata(datastreamURI);
+        this.metadataByDatastream.set(datastreamURI, extractedMetadata);
+        return extractedMetadata;
+    }
+
+    async getFeatureOfInterest(
+        datastreamURI: string,
+        observation: ObservationInput,
+    ) {
+        const existingFeatureOfInterest =
+            this.featureOfInterestByDatastream.get(datastreamURI);
+        if (existingFeatureOfInterest) {
+            return existingFeatureOfInterest;
+        }
+
+        const featureOfInterest = (await (
+            await rateLimitedFetch(
+                observation["FeatureOfInterest@iot.navigationLink"],
+            )
+        ).json()) as FeatureOfInterest;
+        this.featureOfInterestByDatastream.set(
+            datastreamURI,
+            featureOfInterest,
+        );
+        return featureOfInterest;
+    }
+
+    async processDataStream(datastreamURI: string, writer: Writer) {
         // Extract the datastream observations back-to-front
         log(`Processing datastream: ${datastreamURI}`);
-        const metadata = await extractMetadata(datastreamURI);
+        const metadata = await this.getMetadataInfo(datastreamURI);
 
         log(`Datastream metadata: ${JSON.stringify(metadata, null, 2)}`);
 
@@ -157,10 +283,9 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                 : nextLink + "?$orderby=resultTime%20asc";
 
         await this.processPagedObservations(
-            observationsLink,
+            nextLink as string,
             metadata,
             writer,
-            follow,
         );
     }
 
@@ -174,29 +299,15 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
             observedProperty: ObservedProperty;
         },
         writer: Writer,
-        follow?: boolean,
     ) {
-        let previousLink: string | undefined = undefined;
         let nextLink: string | undefined = startURL;
 
         let extracted: {
             observation: ObservationInput;
-            featureOfInterest: FeatureOfInterest;
         }[] = [];
 
         const { datastream, thing, locations, sensor, observedProperty } =
             metadataInfo;
-
-        let metadata:
-            | {
-                  datastream: DataStream;
-                  thing: Thing;
-                  featureOfInterest: FeatureOfInterest;
-                  locations: Location[];
-                  sensor: Sensor;
-                  observedProperty: ObservedProperty;
-              }
-            | undefined;
 
         // We follow the collection page per page
         while (nextLink) {
@@ -204,10 +315,9 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
 
             const info = await extractObservations(nextLink);
             extracted = info.extracted;
-            previousLink = nextLink.slice();
             nextLink = info.nextLink;
 
-            for (const { observation, featureOfInterest } of extracted) {
+            for (const { observation } of extracted) {
                 // Skip processed observations
                 if (
                     this.processedObservations.has(observation["@iot.selfLink"])
@@ -218,19 +328,22 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
                     continue;
                 }
 
-                if (!metadata) {
-                    metadata = await prepareMetadataObject(
-                        {
-                            datastream,
-                            thing,
-                            featureOfInterest,
-                            locations,
-                            sensor,
-                            observedProperty,
-                        },
-                        observation,
-                    );
-                }
+                const featureOfInterest = await this.getFeatureOfInterest(
+                    datastream["@iot.selfLink"],
+                    observation,
+                );
+
+                const metadata = await prepareMetadataObject(
+                    {
+                        datastream,
+                        thing,
+                        featureOfInterest,
+                        locations,
+                        sensor,
+                        observedProperty,
+                    },
+                    observation,
+                );
 
                 // Build the combined observation + all metadata object for easy RML mapping
                 const exportObject = await buildExportedObservationObject(
@@ -246,25 +359,7 @@ export class SensorThingsFetcher extends Processor<TemplateArgs> {
             }
         }
 
-        if (follow) {
-            setTimeout(
-                () =>
-                    // We start again at the previously last retrieved offset, since we are going OLD -> NEW (ascending observations)
-                    // This way, we prevent new additions messing up while we follow, and we can continue where we left of with the previous offset.
-                    // With the way the above loop works, previouslink should never be undefined when arriving here.
-                    this.processPagedObservations(
-                        previousLink as string,
-                        metadataInfo,
-                        writer,
-                        follow,
-                    ),
-                30 * 60 * 1000,
-            );
-        } else {
-            // We cannot close the writer in case other datastreams are also being followed
-            // And its not that important here to make sure the stream closes?
-            // writer.close();
-        }
+        // In follow mode, ongoing updates are handled through MQTT subscriptions.
     }
 }
 
@@ -330,34 +425,31 @@ async function extractMetadata(dataStreamURL: string) {
 async function extractObservations(url: string): Promise<{
     extracted: {
         observation: ObservationInput;
-        featureOfInterest: FeatureOfInterest;
     }[];
     nextLink: string | undefined;
 }> {
     log(`Extracting observations from page ${url}`);
-    let featureOfInterest = undefined;
     const page = await rateLimitedFetch(url);
+
+    log(`PAGE ${JSON.stringify(page, null, 2)}`);
+
     const body = (await page.json()) as {
         value: ObservationInput[];
         ["@iot.nextLink"]?: string;
     };
+
+    log(`BODY ${JSON.stringify(body, null, 2)}`);
+
     const extracted: {
         observation: ObservationInput;
-        featureOfInterest: FeatureOfInterest;
     }[] = [];
+
     for (const observation of body.value) {
-        if (featureOfInterest) {
-            extracted.push({ observation, featureOfInterest });
-        } else {
-            featureOfInterest = (await (
-                await rateLimitedFetch(
-                    observation["FeatureOfInterest@iot.navigationLink"],
-                )
-            ).json()) as FeatureOfInterest;
-            extracted.push({ observation, featureOfInterest });
-        }
+        extracted.push({ observation });
     }
+
     const nextLink = body["@iot.nextLink"];
+    log(`nextLink ${nextLink}`);
     return { extracted, nextLink };
 }
 
@@ -372,25 +464,95 @@ async function prepareMetadataObject(
     },
     observationInput: ObservationInput,
 ): Promise<Metadata> {
-    metadata.datastream.thing = metadata.thing["@iot.selfLink"];
-    metadata.datastream.observedProperty =
-        metadata.observedProperty["@iot.selfLink"];
-    metadata.datastream.sensor = metadata.sensor["@iot.selfLink"];
-    metadata.thing.locations = [];
-    for (const location of metadata.locations) {
-        metadata.thing.locations.push(location["@iot.selfLink"]);
-    }
+    const datastream = {
+        ...metadata.datastream,
+        thing: metadata.thing["@iot.selfLink"],
+        observedProperty: metadata.observedProperty["@iot.selfLink"],
+        sensor: metadata.sensor["@iot.selfLink"],
+    };
 
-    if (!metadata.featureOfInterest) {
-        const newFOI = (await (
+    const thing = {
+        ...metadata.thing,
+        locations: metadata.locations.map(
+            (location) => location["@iot.selfLink"],
+        ),
+    };
+
+    let featureOfInterest = metadata.featureOfInterest;
+
+    if (!featureOfInterest) {
+        featureOfInterest = (await (
             await rateLimitedFetch(
                 observationInput["FeatureOfInterest@iot.navigationLink"],
             )
         ).json()) as FeatureOfInterest;
-        metadata.featureOfInterest = newFOI;
     }
 
-    return metadata as Metadata;
+    return {
+        datastream,
+        thing,
+        locations: metadata.locations,
+        sensor: metadata.sensor,
+        observedProperty: metadata.observedProperty,
+        featureOfInterest,
+    } as Metadata;
+}
+
+function normalizeDatastreams(datastreams?: string[] | string): string[] {
+    if (Array.isArray(datastreams)) {
+        return datastreams.filter((value): value is string => {
+            return typeof value === "string" && value.trim().length > 0;
+        });
+    }
+
+    if (!datastreams?.trim()) {
+        return [];
+    }
+
+    const trimmed = datastreams.trim();
+
+    if (trimmed.startsWith("[")) {
+        try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+                return parsed.filter((value): value is string => {
+                    return typeof value === "string";
+                });
+            }
+        } catch {
+            return [];
+        }
+    }
+
+    return trimmed
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+}
+
+function dedupe(values: string[]): string[] {
+    return [...new Set(values)];
+}
+
+async function runWithConcurrency<T>(
+    values: T[],
+    concurrency: number,
+    worker: (value: T) => Promise<void>,
+): Promise<void> {
+    const queue = [...values];
+    const workers = Array.from(
+        { length: Math.max(1, concurrency) },
+        async () => {
+            while (queue.length > 0) {
+                const item = queue.shift();
+                if (item !== undefined) {
+                    await worker(item);
+                }
+            }
+        },
+    );
+
+    await Promise.all(workers);
 }
 
 async function buildExportedObservationObject(

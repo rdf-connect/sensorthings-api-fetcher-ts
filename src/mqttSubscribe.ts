@@ -1,82 +1,165 @@
-import mqtt, { IClientOptions } from "mqtt";
-import { ObservationInput } from "./types";
+import mqtt from "mqtt";
+import { rateLimitedFetch } from "./ratelimit";
+import type { DataStream, ObservationInput } from "./types";
 
-type Entity = ObservationInput; // you can define a better interface depending on your STA model
+type ObservationUpdate = ObservationInput & {
+    "Datastream@iot.navigationLink"?: string;
+    "Datastreamt@iot.navigationLink"?: string;
+};
 
-interface SubscribeOptions {
-    mqttUrl: string; // e.g. "wss://your-broker/mqtt"
-    mqttOpts?: IClientOptions;
-    topicPrefix?: string; // e.g. "v1.1" or "v1.0"
-    qos?: 0 | 1 | 2;
-}
+export async function subscribeToDatastreamUpdates(args: {
+    brokerUrl: string;
+    datastreamUris: string[];
+    onObservation: (input: {
+        datastreamUri: string;
+        observation: ObservationInput;
+    }) => Promise<void>;
+    onError?: (err: unknown) => void;
+}): Promise<void> {
+    const { brokerUrl, datastreamUris, onObservation, onError } = args;
 
-/**
- * Subscribe to updates (new or modified) in an Observation (or entity) collection via MQTT.
- * @param collectionUri e.g. "Datastreams(1)/Observations" or full path including version prefix
- * @param opts connection / topic options
- * @param onMessage callback invoked when new/updated entity arrives
- * @returns handle to unsubscribe / disconnect
- */
-export function subscribeToSensorThingsCollection(
-    collectionUri: string,
-    opts: SubscribeOptions,
-    onMessage: (entity: Entity, topic: string) => void,
-): { unsubscribe: () => void } {
-    const { mqttUrl, mqttOpts, topicPrefix = "", qos = 0 } = opts;
-
-    // Construct topic string. If collectionUri already includes version, skip adding prefix
-    let topic = collectionUri;
-    if (topicPrefix && !collectionUri.startsWith(topicPrefix + "/")) {
-        topic = `${topicPrefix}/${collectionUri}`;
-    }
-
-    const client = mqtt.connect(mqttUrl, mqttOpts);
+    const topicToDatastream = new Map<string, string>();
+    const datastreamByKey = new Map(
+        datastreamUris.map((uri) => [datastreamKey(uri), uri]),
+    );
+    const client = mqtt.connect(brokerUrl, {
+        reconnectPeriod: 2_000,
+        connectTimeout: 30_000,
+        resubscribe: true,
+        keepalive: 60,
+    });
 
     client.on("connect", () => {
-        console.log("[SensorThings Fetcher] connected, subscribing to", topic);
-        client.subscribe(topic, { qos }, (err, granted) => {
+        const topics = datastreamUris.map((uri) => {
+            const topic = datastreamUriToTopic(uri);
+            topicToDatastream.set(topic, uri);
+            return topic;
+        });
+
+        client.subscribe(topics, (err: Error | null) => {
+            if (isSubscriptionRejected(err)) {
+                subscribeToObservationCollection();
+                return;
+            }
+
             if (err) {
-                console.error("[SensorThings Fetcher] subscribe error", err);
-            } else {
-                console.debug(
-                    "[SensorThings Fetcher] granted subscriptions",
-                    granted,
-                );
+                onError?.(err);
             }
         });
     });
 
-    client.on("message", (recvTopic, messageBuffer) => {
+    function subscribeToObservationCollection() {
+        topicToDatastream.clear();
+        const observationsTopic = "v1.1/Observations";
+        client.subscribe(observationsTopic, (err: Error | null) => {
+            if (err) {
+                onError?.(err);
+            }
+        });
+    }
+
+    client.on("message", async (topic: string, payload: Uint8Array) => {
         try {
-            const payloadText = messageBuffer.toString();
-            const entity = JSON.parse(payloadText);
-            // Optionally you might filter or validate the entity
-            console.log(
-                `Emitting update for topic ${recvTopic}: ${JSON.stringify(entity, null, 2)}`,
-            );
-            onMessage(entity, recvTopic);
+            const parsed = JSON.parse(payload.toString()) as
+                | ObservationUpdate
+                | ObservationUpdate[]
+                | { value: ObservationUpdate[] };
+            const observations = normalizeObservationPayload(parsed);
+
+            for (const observation of observations) {
+                const datastreamUri = await resolveDatastreamUri(
+                    topic,
+                    observation,
+                    topicToDatastream,
+                    datastreamByKey,
+                );
+
+                if (!datastreamUri) {
+                    continue;
+                }
+
+                await onObservation({ datastreamUri, observation });
+            }
         } catch (err) {
-            console.error(
-                "[SensorThings Fetcher] failed to parse message",
-                err,
-                messageBuffer.toString(),
-            );
+            onError?.(err);
         }
     });
 
-    client.on("error", (err) => {
-        console.error("[SensorThings Fetcher] client error", err);
-    });
+    client.on("error", (err: unknown) => onError?.(err));
+    client.on("reconnect", () =>
+        onError?.(new Error("MQTT connection lost, reconnecting...")),
+    );
+}
 
-    function unsubscribe() {
-        client.unsubscribe(topic, (err) => {
-            if (err)
-                console.warn("[SensorThings Fetcher] unsubscribe error", err);
-        });
-        client.end();
+function normalizeObservationPayload(
+    parsed:
+        | ObservationUpdate
+        | ObservationUpdate[]
+        | { value: ObservationUpdate[] },
+) {
+    if (Array.isArray(parsed)) {
+        return parsed;
     }
 
-    return {
-        unsubscribe,
-    };
+    if (Array.isArray((parsed as { value?: ObservationUpdate[] }).value)) {
+        return (parsed as { value: ObservationUpdate[] }).value;
+    }
+
+    return [parsed as ObservationUpdate];
+}
+
+async function resolveDatastreamUri(
+    topic: string,
+    observation: ObservationUpdate,
+    topicToDatastream: Map<string, string>,
+    datastreamByKey: Map<string, string>,
+) {
+    const topicDatastream = topicToDatastream.get(topic);
+    if (topicDatastream) {
+        return topicDatastream;
+    }
+
+    const linkedDatastream =
+        observation["Datastream@iot.navigationLink"] ??
+        observation["Datastreamt@iot.navigationLink"];
+    const datastreamUri =
+        linkedDatastream ?? (await fetchObservationDatastream(observation));
+    if (!datastreamUri) {
+        return undefined;
+    }
+
+    return datastreamByKey.get(datastreamKey(datastreamUri));
+}
+
+async function fetchObservationDatastream(observation: ObservationUpdate) {
+    const observationLink = observation["@iot.selfLink"];
+    if (!observationLink) {
+        return undefined;
+    }
+
+    const response = await rateLimitedFetch(`${observationLink}/Datastream`);
+    const datastream = (await response.json()) as DataStream;
+    return datastream["@iot.selfLink"];
+}
+
+function isSubscriptionRejected(err: Error | null) {
+    const granted = (
+        err as (Error & { packet?: { granted?: number[] } }) | null
+    )?.packet?.granted;
+
+    return Array.isArray(granted) && granted.every((qos) => qos === 128);
+}
+
+function datastreamUriToTopic(uri: string): string {
+    const match = uri.match(/Datastreams\(([^)]+)\)/i);
+    if (!match) {
+        throw new Error(`Cannot derive MQTT topic from datastream URI: ${uri}`);
+    }
+
+    return `v1.1/Datastreams(${match[1]})/Observations`;
+}
+
+function datastreamKey(uri: string): string {
+    const match = uri.match(/Datastreams\(([^)]+)\)/i);
+    return match ? `Datastreams(${match[1]})` : uri;
 }

@@ -24,7 +24,7 @@ Next, you can add the JS/TS TemplateProcessor to your pipeline configuration as 
 
 # fetcher to get SensorThings API data
 <fetcher> a rdfc:SensorThingsFetcher;
-  rdfc:datastream "https://<endpoint>/Datastreams";
+  rdfc:datastream "https://<endpoint>/Datastreams(<id>)";
   rdfc:writer <writeChannel> .
 ```
 
@@ -33,14 +33,12 @@ Datastream URLs can be supplied as separate RDF values:
 ```turtle
 rdfc:datastream "https://iot.hamburg.de/v1.1/Datastreams(26598)", "https://iot.hamburg.de/v1.1/Datastreams(29728)";
 ```
-
-Or as a single comma-separated string, which can also be supplied through an environment variable in your pipeline:
-
+Or as a single comma-separated string:
 ```turtle
 rdfc:datastream "https://iot.hamburg.de/v1.1/Datastreams(26598), https://iot.hamburg.de/v1.1/Datastreams(29728)";
 ```
 
-Both forms can be mixed. Whitespace around URLs is trimmed and empty entries are ignored. Supply at least one non-empty URL, or use `rdfc:datastreamCollection` instead.
+Alternatively, the `rdfc:datastreamCollection` option can be used to pass a URL that dereferences to a sensorthings Datastreams page, of which all contained datastreams will be retrieved. The combined use of `rdfc:datastream` and `rdfc:datastreamCollection` is not supported. The `rdfc:maxDatastreams` parameter limits the amount of datastreams discovered through a `rdfc:datastreamCollection`.
 
 ## Data output
 

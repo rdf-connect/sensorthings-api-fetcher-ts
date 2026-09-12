@@ -1,52 +1,476 @@
-import { describe, expect, test } from "vitest";
-import { SensorThingsFetcher } from "../src";
 import { createWriter, logger } from "@rdfc/js-runner/lib/testUtils";
-import type { FullProc } from "@rdfc/js-runner";
+import { FullProc } from "@rdfc/js-runner";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
-const first = "https://iot.hamburg.de/v1.1/Datastreams(26598)";
-const second = "https://iot.hamburg.de/v1.1/Datastreams(29728)";
+vi.mock("../src/ratelimit", () => ({
+    rateLimitedFetch: vi.fn(),
+}));
 
-function createProcessor(
-    datastream?: string | string[],
-    datastreamCollection = "",
-) {
-    const [writer] = createWriter();
-    return new SensorThingsFetcher(
-        {
-            datastream,
-            datastreamCollection,
-            writer,
-            follow: false,
-            maxDatastreams: 0,
-        },
-        logger,
-    ) as FullProc<SensorThingsFetcher>;
-}
+vi.mock("../src/mqttSubscribe", () => ({
+    subscribeToDatastreamUpdates: vi.fn().mockResolvedValue(undefined),
+}));
 
-describe("Datastream configuration", () => {
-    test.each([
-        { input: first, expected: [first] },
-        { input: [first, second], expected: [first, second] },
-        { input: `${first}, ${second}`, expected: [first, second] },
-        { input: [` ${first}, `, `, ${second} `], expected: [first, second] },
-    ])("normalizes $input", async ({ input, expected }) => {
-        const processor = createProcessor(input);
-        await processor.init();
-        expect(processor.datastreams).toEqual(expected);
+import { rateLimitedFetch } from "../src/ratelimit";
+import { subscribeToDatastreamUpdates } from "../src/mqttSubscribe";
+import { SensorThingsFetcher } from "../src";
+
+type JsonResponse = {
+    json: () => Promise<unknown>;
+};
+
+const DS_1 = "https://iot.hamburg.de/v1.1/Datastreams(29728)";
+const DS_2 = "https://iot.hamburg.de/v1.1/Datastreams(30936)";
+
+const mockedRateLimitedFetch = vi.mocked(rateLimitedFetch);
+const mockedSubscribeToDatastreamUpdates = vi.mocked(
+    subscribeToDatastreamUpdates,
+);
+
+describe("SensorThingsFetcher functional tests", () => {
+    beforeEach(() => {
+        mockedRateLimitedFetch.mockReset();
+        mockedSubscribeToDatastreamUpdates.mockClear();
     });
 
-    test.each([undefined, "", " ,  , ", [], ["", " , "]])(
-        "rejects empty datastream configuration %j",
-        async (input) => {
-            await expect(createProcessor(input).init()).rejects.toThrow(
-                "requires either",
+    test("loads two datastreams and emits observation+metadata for each observation", async () => {
+        const apiFixtures = buildHamburgFixtures();
+
+        mockedRateLimitedFetch.mockImplementation(async (url: string) => {
+            const body = apiFixtures.get(url);
+            if (!body) {
+                throw new Error(
+                    `Unexpected URL requested in test fixture: ${url}`,
+                );
+            }
+
+            const response: JsonResponse = {
+                json: async () => structuredClone(body),
+            };
+
+            return response as unknown as Response;
+        });
+
+        const [outputWriter, outputReader] = createWriter();
+
+        const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
+            {
+                writer: outputWriter,
+                datastream: [DS_1, DS_2],
+                follow: false,
+            },
+            logger,
+        );
+
+        await proc.init();
+
+        const readPromise = collectStrings(outputReader);
+        await proc.produce();
+        const emitted = await readPromise;
+
+        expect(emitted).toHaveLength(3);
+
+        const parsed = emitted.map((entry) => JSON.parse(entry));
+        const observationLinks = parsed
+            .map((entry) => entry.observation?.["@iot.selfLink"] as string)
+            .sort();
+
+        expect(observationLinks).toEqual([
+            "https://iot.hamburg.de/v1.1/Observations(90001)",
+            "https://iot.hamburg.de/v1.1/Observations(90002)",
+            "https://iot.hamburg.de/v1.1/Observations(91001)",
+        ]);
+
+        for (const item of parsed) {
+            expect(item.datastream?.["@iot.selfLink"]).toBeTypeOf("string");
+            expect(item.datastream?.thing).toBe(item.thing?.["@iot.selfLink"]);
+            expect(item.datastream?.sensor).toBe(
+                item.sensor?.["@iot.selfLink"],
             );
+            expect(item.datastream?.observedProperty).toBe(
+                item.observedProperty?.["@iot.selfLink"],
+            );
+            expect(Array.isArray(item.locations)).toBe(true);
+            expect(item.locations.length).toBeGreaterThan(0);
+            expect(item.featureOfInterest?.["@iot.selfLink"]).toBeTypeOf(
+                "string",
+            );
+            expect(item.observation?.datastream).toBe(
+                item.datastream?.["@iot.selfLink"],
+            );
+            expect(item.observation?.featureOfInterest).toBe(
+                item.featureOfInterest?.["@iot.selfLink"],
+            );
+            expect(
+                item.observation?.phenomenonTime?.hasBeginning
+                    ?.inXSDDateTimeStamp,
+            ).toBeTypeOf("string");
+            expect(
+                item.observation?.phenomenonTime?.hasEnd?.inXSDDateTimeStamp,
+            ).toBeTypeOf("string");
+            expect(item.observation?.phenomenonTime?.hasXSDDuration).toBeTypeOf(
+                "string",
+            );
+        }
+
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(DS_1);
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(DS_2);
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations?$orderby=resultTime%20asc",
+        );
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations?$orderby=resultTime%20asc",
+        );
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
+        );
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/Sensors(20002)",
+        );
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/Things(10002)/Locations",
+        );
+
+        const featureOfInterestRequests = mockedRateLimitedFetch.mock.calls
+            .map(([url]) => url)
+            .filter((url) => url.includes("/FeaturesOfInterest("));
+
+        expect(featureOfInterestRequests.sort()).toEqual(
+            [
+                "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
+                "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)",
+            ].sort(),
+        );
+    });
+
+    test("does not truncate explicit datastream lists with maxDatastreams", async () => {
+        const apiFixtures = buildHamburgFixtures();
+
+        mockedRateLimitedFetch.mockImplementation(async (url: string) => {
+            const body = apiFixtures.get(url);
+            if (!body) {
+                throw new Error(
+                    `Unexpected URL requested in test fixture: ${url}`,
+                );
+            }
+
+            const response: JsonResponse = {
+                json: async () => structuredClone(body),
+            };
+
+            return response as unknown as Response;
+        });
+
+        const [outputWriter, outputReader] = createWriter();
+
+        const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
+            {
+                writer: outputWriter,
+                datastream: [DS_1, DS_2],
+                follow: false,
+                maxDatastreams: 1,
+            },
+            logger,
+        );
+
+        await proc.init();
+
+        const readPromise = collectStrings(outputReader);
+        await proc.produce();
+        const emitted = await readPromise;
+
+        expect(proc.inputDatastreams).toEqual([DS_1, DS_2]);
+        expect(emitted).toHaveLength(3);
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations?$orderby=resultTime%20asc",
+        );
+        expect(mockedRateLimitedFetch).toHaveBeenCalledWith(
+            "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations?$orderby=resultTime%20asc",
+        );
+    });
+
+    test("subscribes to all datastreams before fetching backlog in follow mode", async () => {
+        const apiFixtures = buildHamburgFixtures();
+        const calls: string[] = [];
+        const events: string[] = [];
+
+        mockedSubscribeToDatastreamUpdates.mockImplementationOnce(async () => {
+            events.push("subscribe");
+        });
+
+        mockedRateLimitedFetch.mockImplementation(async (url: string) => {
+            calls.push(url);
+
+            if (url.includes("/Observations?")) {
+                events.push("backlog");
+                throw new Error("stop after confirming backlog fetch started");
+            }
+
+            const body = apiFixtures.get(url);
+            if (!body) {
+                throw new Error(
+                    `Unexpected URL requested in test fixture: ${url}`,
+                );
+            }
+
+            const response: JsonResponse = {
+                json: async () => structuredClone(body),
+            };
+
+            return response as unknown as Response;
+        });
+
+        const [outputWriter] = createWriter();
+        const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
+            {
+                writer: outputWriter,
+                datastream: [DS_1, DS_2],
+                follow: true,
+                mqttBrokerUrl: "mqtt://example.test",
+            },
+            logger,
+        );
+
+        await proc.init();
+        calls.length = 0;
+
+        const consoleError = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
+        try {
+            await proc.produce();
+        } finally {
+            consoleError.mockRestore();
+        }
+
+        expect(mockedSubscribeToDatastreamUpdates).toHaveBeenCalledTimes(1);
+        expect(mockedSubscribeToDatastreamUpdates).toHaveBeenCalledWith(
+            expect.objectContaining({
+                brokerUrl: "mqtt://example.test",
+                datastreamUris: [DS_1, DS_2],
+            }),
+        );
+        expect(calls.some((url) => url.includes("/Observations?"))).toBe(true);
+        expect(events[0]).toBe("subscribe");
+        expect(events).toContain("backlog");
+    });
+});
+
+async function collectStrings(reader: {
+    strings: () => AsyncIterable<string>;
+}) {
+    const values: string[] = [];
+    for await (const item of reader.strings()) {
+        values.push(item);
+    }
+    return values;
+}
+
+function buildHamburgFixtures(): Map<string, unknown> {
+    const fixtures = new Map<string, unknown>();
+
+    fixtures.set(DS_1, {
+        "@iot.selfLink": DS_1,
+        "@iot.id": 29728,
+        name: "Datastream 29728",
+        description: "Temperature observations",
+        observationType: "OM_Measurement",
+        unitOfMeasurement: { name: "Celsius", symbol: "°C", definition: "" },
+        observedArea: {},
+        phenomenonTime: "2026-06-01T00:00:00Z/2026-06-01T01:00:00Z",
+        properties: {},
+        resultTime: "2026-06-01T01:00:00Z",
+        "Thing@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10001)",
+        "Sensor@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Sensors(20001)",
+        "ObservedProperty@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
+        "Observations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations",
+    });
+
+    fixtures.set(DS_2, {
+        "@iot.selfLink": DS_2,
+        "@iot.id": 30936,
+        name: "Datastream 30936",
+        description: "Humidity observations",
+        observationType: "OM_Measurement",
+        unitOfMeasurement: { name: "Percent", symbol: "%", definition: "" },
+        observedArea: {},
+        phenomenonTime: "2026-06-01T00:00:00Z/2026-06-01T01:00:00Z",
+        properties: {},
+        resultTime: "2026-06-01T01:00:00Z",
+        "Thing@iot.navigationLink": "https://iot.hamburg.de/v1.1/Things(10002)",
+        "Sensor@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Sensors(20002)",
+        "ObservedProperty@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
+        "Observations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations",
+    });
+
+    fixtures.set("https://iot.hamburg.de/v1.1/Things(10001)", {
+        "@iot.selfLink": "https://iot.hamburg.de/v1.1/Things(10001)",
+        "@iot.id": 10001,
+        name: "Thing 10001",
+        description: "Station A",
+        properties: {},
+        "Locations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10001)/Locations",
+        "HistoricalLocations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10001)/HistoricalLocations",
+    });
+
+    fixtures.set("https://iot.hamburg.de/v1.1/Things(10002)", {
+        "@iot.selfLink": "https://iot.hamburg.de/v1.1/Things(10002)",
+        "@iot.id": 10002,
+        name: "Thing 10002",
+        description: "Station B",
+        properties: {},
+        "Locations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10002)/Locations",
+        "HistoricalLocations@iot.navigationLink":
+            "https://iot.hamburg.de/v1.1/Things(10002)/HistoricalLocations",
+    });
+
+    fixtures.set("https://iot.hamburg.de/v1.1/Sensors(20001)", {
+        "@iot.selfLink": "https://iot.hamburg.de/v1.1/Sensors(20001)",
+        "@iot.id": 20001,
+        name: "Sensor 20001",
+        description: "Temp Sensor",
+        encodingType: "application/pdf",
+        metadata: "https://example.org/sensors/20001.pdf",
+    });
+
+    fixtures.set("https://iot.hamburg.de/v1.1/Sensors(20002)", {
+        "@iot.selfLink": "https://iot.hamburg.de/v1.1/Sensors(20002)",
+        "@iot.id": 20002,
+        name: "Sensor 20002",
+        description: "Humidity Sensor",
+        encodingType: "application/pdf",
+        metadata: "https://example.org/sensors/20002.pdf",
+    });
+
+    fixtures.set("https://iot.hamburg.de/v1.1/ObservedProperties(30001)", {
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30001)",
+        "@iot.id": 30001,
+        name: "air temperature",
+        definition: "https://example.org/temperature",
+        description: "Air temperature",
+    });
+
+    fixtures.set("https://iot.hamburg.de/v1.1/ObservedProperties(30002)", {
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/ObservedProperties(30002)",
+        "@iot.id": 30002,
+        name: "relative humidity",
+        definition: "https://example.org/humidity",
+        description: "Relative humidity",
+    });
+
+    fixtures.set("https://iot.hamburg.de/v1.1/Things(10001)/Locations", {
+        value: [
+            {
+                "@iot.selfLink": "https://iot.hamburg.de/v1.1/Locations(50001)",
+                "@iot.id": 50001,
+                name: "Location 50001",
+                description: "Station A location",
+                encodingType: "application/vnd.geo+json",
+                location: { type: "Feature", properties: {}, geometry: {} },
+                properties: {},
+            },
+        ],
+    });
+
+    fixtures.set("https://iot.hamburg.de/v1.1/Things(10002)/Locations", {
+        value: [
+            {
+                "@iot.selfLink": "https://iot.hamburg.de/v1.1/Locations(50002)",
+                "@iot.id": 50002,
+                name: "Location 50002",
+                description: "Station B location",
+                encodingType: "application/vnd.geo+json",
+                location: { type: "Feature", properties: {}, geometry: {} },
+                properties: {},
+            },
+        ],
+    });
+
+    fixtures.set(
+        "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations?$orderby=resultTime%20asc",
+        {
+            value: [
+                {
+                    "@iot.selfLink":
+                        "https://iot.hamburg.de/v1.1/Observations(90001)",
+                    "@iot.id": 90001,
+                    phenomenonTime: "2026-06-01T00:00:00Z/2026-06-01T00:05:00Z",
+                    resultTime: "2026-06-01T00:05:00Z",
+                    "FeatureOfInterest@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
+                    "Datastreamt@iot.navigationLink": DS_1,
+                },
+            ],
+            "@iot.nextLink":
+                "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations?$skip=1&$orderby=resultTime%20asc",
         },
     );
 
-    test("rejects datastreams combined with a collection", async () => {
-        await expect(
-            createProcessor([first], "https://example.com/Datastreams").init(),
-        ).rejects.toThrow("requires only a single one");
+    fixtures.set(
+        "https://iot.hamburg.de/v1.1/Datastreams(29728)/Observations?$skip=1&$orderby=resultTime%20asc",
+        {
+            value: [
+                {
+                    "@iot.selfLink":
+                        "https://iot.hamburg.de/v1.1/Observations(90002)",
+                    "@iot.id": 90002,
+                    phenomenonTime: "2026-06-01T00:10:00Z/2026-06-01T00:15:00Z",
+                    resultTime: "2026-06-01T00:15:00Z",
+                    "FeatureOfInterest@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001-observation-90002)",
+                    "Datastreamt@iot.navigationLink": DS_1,
+                },
+            ],
+        },
+    );
+
+    fixtures.set(
+        "https://iot.hamburg.de/v1.1/Datastreams(30936)/Observations?$orderby=resultTime%20asc",
+        {
+            value: [
+                {
+                    "@iot.selfLink":
+                        "https://iot.hamburg.de/v1.1/Observations(91001)",
+                    "@iot.id": 91001,
+                    phenomenonTime: "2026-06-01T00:20:00Z/2026-06-01T00:25:00Z",
+                    resultTime: "2026-06-01T00:25:00Z",
+                    "FeatureOfInterest@iot.navigationLink":
+                        "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)",
+                    "Datastreamt@iot.navigationLink": DS_2,
+                },
+            ],
+        },
+    );
+
+    fixtures.set("https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)", {
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40001)",
+        name: "Feature 40001",
+        description: "Feature of interest for DS 29728",
+        encodingType: "application/vnd.geo+json",
+        feature: {},
+        properties: {},
     });
-});
+
+    fixtures.set("https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)", {
+        "@iot.selfLink":
+            "https://iot.hamburg.de/v1.1/FeaturesOfInterest(40002)",
+        name: "Feature 40002",
+        description: "Feature of interest for DS 30936",
+        encodingType: "application/vnd.geo+json",
+        feature: {},
+        properties: {},
+    });
+
+    return fixtures;
+}
