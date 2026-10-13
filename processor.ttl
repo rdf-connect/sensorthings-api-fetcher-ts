@@ -15,12 +15,14 @@ rdfc:SensorThingsFetcher rdfc:jsImplementationOf rdfc:Processor;
     sh:property [
         sh:path rdfc:datastreamCollection;
         sh:name "datastreamCollection";
-        sh:datatype xsd:string;
+        sh:nodeKind sh:IRIOrLiteral;
+        sh:codeType xsd:string;
         sh:maxCount 1;
     ], [
         sh:path rdfc:datastream;
         sh:name "datastream";
-        sh:datatype xsd:string;
+        sh:nodeKind sh:IRIOrLiteral;
+        sh:codeType xsd:string;
     ], [
         sh:class rdfc:Writer;
         sh:path rdfc:writer;
@@ -40,6 +42,7 @@ rdfc:SensorThingsFetcher rdfc:jsImplementationOf rdfc:Processor;
     ], [
         sh:path rdfc:mqttBrokerUrl;
         sh:name "mqttBrokerUrl";
-        sh:datatype xsd:string;
+        sh:nodeKind sh:IRIOrLiteral;
+        sh:codeType xsd:string;
         sh:maxCount 1;
     ].

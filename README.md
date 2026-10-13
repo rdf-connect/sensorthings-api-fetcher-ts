@@ -41,6 +41,7 @@ maps these repeated values to the processor's `datastream` argument.
 ```
 
 Exactly one input source should be configured: repeated `rdfc:datastream` or a single `rdfc:datastreamCollection`.
+The URLs of `rdfc:datastream`, `rdfc:datastreamCollection` and `rdfc:mqttBrokerUrl` can be written as a `string` or as an IRI, like `<https://iot.hamburg.de/v1.1/Datastreams(29728)>`.
 Here, `rdfc:maxDatastreams` limits the amount of datastreams discovered through `rdfc:datastreamCollection`.
 
 ## Data output
