@@ -135,6 +135,63 @@ describe("SensorThingsFetcher processor tests", async () => {
         expect(requestedUrls).toContain(DS_1);
         expect(requestedUrls).toContain(DS_2);
     });
+
+    test("URLs can be written as IRIs", async () => {
+        const apiFixtures = buildMetadataFixtures();
+        const requestedUrls: string[] = [];
+
+        vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+            requestedUrls.push(url);
+
+            const body = apiFixtures.get(url);
+            if (!body) {
+                throw new Error(`Unexpected URL requested in test fixture: ${url}`);
+            }
+
+            return {
+                ok: true,
+                json: async () => structuredClone(body),
+            } as unknown as Response;
+        }));
+
+        const helper = new ProcHelper<SensorThingsFetcher>();
+        await helper.importFile(path.resolve("./processor.ttl"));
+        await helper.importInline(
+            path.resolve("pipeline.ttl"),
+            `
+@prefix rdfc: <https://w3id.org/rdf-connect#>.
+
+<http://example.com/ns#processor> a rdfc:SensorThingsFetcher;
+    rdfc:datastream <${DS_1}>, <${DS_2}>;
+    rdfc:mqttBrokerUrl <mqtt://example-broker>;
+    rdfc:writer <http://example.com/ns#writer>;
+    rdfc:follow false.
+
+<http://example.com/ns#collection> a rdfc:SensorThingsFetcher;
+    rdfc:datastreamCollection <https://iot.hamburg.de/v1.1/Datastreams>;
+    rdfc:writer <http://example.com/ns#writer>.
+`,
+        );
+        helper.getConfig("SensorThingsFetcher");
+
+        const processor = await helper.getProcessor(
+            "http://example.com/ns#processor",
+        );
+        expect(processor.mqttBrokerUrl).toBe("mqtt://example-broker");
+        await processor.init();
+
+        expect(processor.inputDatastreams).toEqual([DS_1, DS_2]);
+        expect(processor.metadataByDatastream.size).toBe(2);
+        expect(requestedUrls).toContain(DS_1);
+        expect(requestedUrls).toContain(DS_2);
+
+        const collection = await helper.getProcessor(
+            "http://example.com/ns#collection",
+        );
+        expect(collection.datastreamCollection).toBe(
+            "https://iot.hamburg.de/v1.1/Datastreams",
+        );
+    });
 });
 
 function buildMetadataFixtures(): Map<string, unknown> {
