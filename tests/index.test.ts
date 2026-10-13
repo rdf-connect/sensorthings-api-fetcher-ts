@@ -1,6 +1,7 @@
-import { createWriter, logger } from "@rdfc/js-runner/lib/testUtils";
+import { channel, createRunner } from "@rdfc/js-runner/lib/testUtils";
 import { FullProc } from "@rdfc/js-runner";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { createLogger, transports } from "winston";
 
 vi.mock("../src/ratelimit", () => ({
     rateLimitedFetch: vi.fn(),
@@ -20,6 +21,12 @@ type JsonResponse = {
 
 const DS_1 = "https://iot.hamburg.de/v1.1/Datastreams(29728)";
 const DS_2 = "https://iot.hamburg.de/v1.1/Datastreams(30936)";
+
+const logger = createLogger({
+    transports: new transports.Console({
+        level: process.env["DEBUG"] || "info",
+    }),
+});
 
 const mockedRateLimitedFetch = vi.mocked(rateLimitedFetch);
 const mockedSubscribeToDatastreamUpdates = vi.mocked(
@@ -48,7 +55,7 @@ describe("SensorThingsFetcher functional tests", () => {
             return response as unknown as Response;
         });
 
-        const [outputWriter, outputReader] = createWriter();
+        const [outputWriter, outputReader] = channel(createRunner(), "output");
 
         const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
             {
@@ -149,7 +156,7 @@ describe("SensorThingsFetcher functional tests", () => {
             return response as unknown as Response;
         });
 
-        const [outputWriter, outputReader] = createWriter();
+        const [outputWriter, outputReader] = channel(createRunner(), "output");
 
         const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
             {
@@ -206,7 +213,7 @@ describe("SensorThingsFetcher functional tests", () => {
             return response as unknown as Response;
         });
 
-        const [outputWriter] = createWriter();
+        const [outputWriter] = channel(createRunner(), "output");
         const proc = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
             {
                 writer: outputWriter,
