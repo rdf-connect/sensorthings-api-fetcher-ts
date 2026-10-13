@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
-    checkProcDefinition,
-    createWriter,
-    getProc,
-    logger,
+    channel,
+    createRunner,
+    ProcHelper,
 } from "@rdfc/js-runner/lib/testUtils";
 import { FullProc } from "@rdfc/js-runner";
+import { createLogger, transports } from "winston";
+import * as path from "path";
 
 vi.mock("../src/ratelimit", () => ({
     rateLimitedFetch: vi.fn(),
@@ -16,6 +17,12 @@ import { SensorThingsFetcher } from "../src";
 
 const DS_1 = "https://iot.hamburg.de/v1.1/Datastreams(29728)";
 const DS_2 = "https://iot.hamburg.de/v1.1/Datastreams(30936)";
+
+const logger = createLogger({
+    transports: new transports.Console({
+        level: process.env["DEBUG"] || "info",
+    }),
+});
 
 const mockedRateLimitedFetch = vi.mocked(rateLimitedFetch);
 
@@ -45,10 +52,15 @@ describe("SensorThingsFetcher processor tests", async () => {
             } as unknown as Response;
         });
 
-        const configLocation = process.cwd() + "/processor.ttl";
-        await checkProcDefinition(configLocation, "SensorThingsFetcher");
+        const helper = new ProcHelper<SensorThingsFetcher>();
+        await helper.importFile(path.resolve("./processor.ttl"));
+        const config = helper.getConfig("SensorThingsFetcher");
 
-        const [writer] = createWriter();
+        expect(config.location).toBeDefined();
+        expect(config.file).toBeDefined();
+        expect(config.clazz).toEqual("SensorThingsFetcher");
+
+        const [writer] = channel(createRunner(), "writer");
         const processor = <FullProc<SensorThingsFetcher>>new SensorThingsFetcher(
             {
                 datastream: [DS_1, DS_2],
@@ -98,7 +110,10 @@ describe("SensorThingsFetcher processor tests", async () => {
             } as unknown as Response;
         }));
 
-        const processor = await getProc<SensorThingsFetcher>(
+        const helper = new ProcHelper<SensorThingsFetcher>();
+        await helper.importFile(path.resolve("./processor.ttl"));
+        await helper.importInline(
+            path.resolve("pipeline.ttl"),
             `
 @prefix rdfc: <https://w3id.org/rdf-connect#>.
 
@@ -107,9 +122,13 @@ describe("SensorThingsFetcher processor tests", async () => {
     rdfc:writer <http://example.com/ns#writer>;
     rdfc:follow false.
 `,
-            "SensorThingsFetcher",
-            process.cwd() + "/processor.ttl",
         );
+        helper.getConfig("SensorThingsFetcher");
+
+        const processor = await helper.getProcessor(
+            "http://example.com/ns#processor",
+        );
+        await processor.init();
 
         expect(processor.inputDatastreams).toEqual([DS_1, DS_2]);
         expect(processor.metadataByDatastream.size).toBe(2);
